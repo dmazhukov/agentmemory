@@ -128,6 +128,24 @@ describe("Export/Import Functions", () => {
     expect(result.summaries.length).toBe(1);
   });
 
+  it("export without params returns the complete corpus unchanged", async () => {
+    const result = (await sdk.trigger("mem::export", {})) as ExportData;
+
+    // Pins the contract every consumer depends on: no query params means
+    // the whole corpus, in exactly this shape. Empty collections stay
+    // absent rather than becoming empty arrays, and no pagination block
+    // appears. exportedAt is the only time-varying field.
+    const { exportedAt, ...stable } = result;
+    expect(exportedAt).toBeDefined();
+    expect(stable).toEqual({
+      version: "0.9.28",
+      sessions: [testSession],
+      observations: { ses_1: [testObs] },
+      memories: [testMemory],
+      summaries: [testSummary],
+    });
+  });
+
   it("import with merge strategy adds data", async () => {
     const exportData: ExportData = {
       version: "0.3.0",
