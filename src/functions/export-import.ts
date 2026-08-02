@@ -22,6 +22,7 @@ import type {
   Lesson,
   Insight,
   ExportPagination,
+  ExportTooLarge,
   AccessLogExport,
 } from "../types.js";
 import { normalizeAccessLog } from "./access-tracker.js";
@@ -48,20 +49,66 @@ function getExportKvConcurrency(): number {
   return Number.isFinite(n) && n > 0 ? n : EXPORT_KV_CONCURRENCY_DEFAULT;
 }
 
+// Ceiling on the serialized export, below the 16 MiB (16777216 B) frame
+// limit the engine's WebSocket transport enforces. Measured on a local
+// daemon: 16771046 B returns 200, one 27 KB step further kills the
+// worker connection — and the drop 404s every endpoint until the worker
+// re-registers ~1s later, so this is a daemon-wide outage triggered by a
+// single GET. 15 MiB leaves room for the transport's own framing.
+const EXPORT_MAX_BYTES_DEFAULT = 15 * 1024 * 1024;
+
+function getExportMaxBytes(): number {
+  const raw = process.env.EXPORT_MAX_BYTES;
+  if (!raw) return EXPORT_MAX_BYTES_DEFAULT;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : EXPORT_MAX_BYTES_DEFAULT;
+}
+
 export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::export", 
-    async (data?: { maxSessions?: number; offset?: number }) => {
+    async (data?: {
+      maxSessions?: number;
+      offset?: number;
+      collectionLimit?: number;
+      collectionOffset?: number;
+    }) => {
       const rawMax = Number(data?.maxSessions);
       const maxSessions = Number.isFinite(rawMax) && rawMax > 0 ? Math.min(Math.floor(rawMax), 1000) : undefined;
       const rawOffset = Number(data?.offset);
       const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? Math.floor(rawOffset) : 0;
+      const rawCollectionLimit = Number(data?.collectionLimit);
+      const collectionLimit =
+        Number.isFinite(rawCollectionLimit) && rawCollectionLimit > 0
+          ? Math.floor(rawCollectionLimit)
+          : undefined;
+      const rawCollectionOffset = Number(data?.collectionOffset);
+      const collectionOffset =
+        Number.isFinite(rawCollectionOffset) && rawCollectionOffset >= 0
+          ? Math.floor(rawCollectionOffset)
+          : 0;
+
+      // Records every collection's full size before slicing, so the
+      // caller can tell how far it still has to page even though the
+      // response only carries one window.
+      const collectionTotals: Record<string, number> = {};
+      const sliceCollection = <T>(name: string, rows: T[]): T[] => {
+        collectionTotals[name] = rows.length;
+        if (collectionLimit === undefined) return rows;
+        return rows.slice(collectionOffset, collectionOffset + collectionLimit);
+      };
 
       const allSessions = await kv.list<Session>(KV.sessions);
       const paginatedSessions = maxSessions !== undefined
         ? allSessions.slice(offset, offset + maxSessions)
         : allSessions;
-      const memories = await kv.list<Memory>(KV.memories);
-      const summaries = await kv.list<SessionSummary>(KV.summaries);
+      const memories = sliceCollection(
+        "memories",
+        await kv.list<Memory>(KV.memories),
+      );
+      const summaries = sliceCollection(
+        "summaries",
+        await kv.list<SessionSummary>(KV.summaries),
+      );
 
       const concurrency = getExportKvConcurrency();
 
@@ -94,22 +141,22 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
       }
 
       const collectionLoaders: Array<() => Promise<unknown[]>> = [
-        () => kv.list<GraphNode>(KV.graphNodes).catch(() => []),
-        () => kv.list<GraphEdge>(KV.graphEdges).catch(() => []),
-        () => kv.list<SemanticMemory>(KV.semantic).catch(() => []),
-        () => kv.list<ProceduralMemory>(KV.procedural).catch(() => []),
-        () => kv.list<Action>(KV.actions).catch(() => []),
-        () => kv.list<ActionEdge>(KV.actionEdges).catch(() => []),
-        () => kv.list<Sentinel>(KV.sentinels).catch(() => []),
-        () => kv.list<Sketch>(KV.sketches).catch(() => []),
-        () => kv.list<Crystal>(KV.crystals).catch(() => []),
-        () => kv.list<Facet>(KV.facets).catch(() => []),
-        () => kv.list<Lesson>(KV.lessons).catch(() => []),
-        () => kv.list<Insight>(KV.insights).catch(() => []),
-        () => kv.list<Routine>(KV.routines).catch(() => []),
-        () => kv.list<Signal>(KV.signals).catch(() => []),
-        () => kv.list<Checkpoint>(KV.checkpoints).catch(() => []),
-        () => kv.list<AccessLogExport>(KV.accessLog).catch(() => []),
+        () => kv.list<GraphNode>(KV.graphNodes).catch(() => []).then((r) => sliceCollection("graphNodes", r)),
+        () => kv.list<GraphEdge>(KV.graphEdges).catch(() => []).then((r) => sliceCollection("graphEdges", r)),
+        () => kv.list<SemanticMemory>(KV.semantic).catch(() => []).then((r) => sliceCollection("semanticMemories", r)),
+        () => kv.list<ProceduralMemory>(KV.procedural).catch(() => []).then((r) => sliceCollection("proceduralMemories", r)),
+        () => kv.list<Action>(KV.actions).catch(() => []).then((r) => sliceCollection("actions", r)),
+        () => kv.list<ActionEdge>(KV.actionEdges).catch(() => []).then((r) => sliceCollection("actionEdges", r)),
+        () => kv.list<Sentinel>(KV.sentinels).catch(() => []).then((r) => sliceCollection("sentinels", r)),
+        () => kv.list<Sketch>(KV.sketches).catch(() => []).then((r) => sliceCollection("sketches", r)),
+        () => kv.list<Crystal>(KV.crystals).catch(() => []).then((r) => sliceCollection("crystals", r)),
+        () => kv.list<Facet>(KV.facets).catch(() => []).then((r) => sliceCollection("facets", r)),
+        () => kv.list<Lesson>(KV.lessons).catch(() => []).then((r) => sliceCollection("lessons", r)),
+        () => kv.list<Insight>(KV.insights).catch(() => []).then((r) => sliceCollection("insights", r)),
+        () => kv.list<Routine>(KV.routines).catch(() => []).then((r) => sliceCollection("routines", r)),
+        () => kv.list<Signal>(KV.signals).catch(() => []).then((r) => sliceCollection("signals", r)),
+        () => kv.list<Checkpoint>(KV.checkpoints).catch(() => []).then((r) => sliceCollection("checkpoints", r)),
+        () => kv.list<AccessLogExport>(KV.accessLog).catch(() => []).then((r) => sliceCollection("accessLogs", r)),
       ];
 
       // mapBounded returns a homogeneous R[]; this list is a fixed-shape
@@ -192,16 +239,50 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         };
       }
 
+      if (collectionLimit !== undefined) {
+        exportData.collectionPagination = {
+          offset: collectionOffset,
+          limit: collectionLimit,
+          totals: collectionTotals,
+          hasMore: Object.values(collectionTotals).some(
+            (total) => collectionOffset + collectionLimit < total,
+          ),
+        };
+      }
+
       const totalObs = Object.values(observations).reduce(
         (sum, arr) => sum + arr.length,
         0,
       );
+      // Measured before returning, not after: mem::export's result goes
+      // back to the engine over the same WebSocket that api::export's
+      // response later uses, so an oversized dump dies on the first hop
+      // and the caller only ever sees "Invocation stopped".
+      const serializedBytes = Buffer.byteLength(JSON.stringify(exportData));
+      const maxBytes = getExportMaxBytes();
+      if (serializedBytes > maxBytes) {
+        logger.warn("Export refused: payload exceeds transport limit", {
+          bytes: serializedBytes,
+          limitBytes: maxBytes,
+          totalSessions: allSessions.length,
+        });
+        const tooLarge: ExportTooLarge = {
+          error: "export_too_large",
+          bytes: serializedBytes,
+          limitBytes: maxBytes,
+          totalSessions: allSessions.length,
+          hint: `Export ${serializedBytes} bytes exceeds the ${maxBytes} byte transport limit. Re-request in pages with ?maxSessions= and ?offset=, or narrow the payload with ?collectionLimit= and ?collectionOffset=.`,
+        };
+        return tooLarge;
+      }
+
       logger.info("Export complete", {
         sessions: paginatedSessions.length,
         totalSessions: allSessions.length,
         observations: totalObs,
         memories: memories.length,
         summaries: summaries.length,
+        bytes: serializedBytes,
       });
 
       return exportData;

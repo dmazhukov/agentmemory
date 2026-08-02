@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -267,6 +267,108 @@ describe("Export/Import Functions", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("Unsupported export version");
+  });
+});
+
+describe("Export transport limit", () => {
+  let sdk: ReturnType<typeof mockSdk>;
+  let kv: ReturnType<typeof mockKV>;
+
+  beforeEach(async () => {
+    sdk = mockSdk();
+    kv = mockKV();
+    registerExportImportFunction(sdk as never, kv as never);
+    await kv.set("mem:sessions", "ses_1", testSession);
+    await kv.set("mem:obs:ses_1", "obs_1", testObs);
+    await kv.set("mem:memories", "mem_1", testMemory);
+    await kv.set("mem:summaries", "ses_1", testSummary);
+  });
+
+  afterEach(() => {
+    delete process.env.EXPORT_MAX_BYTES;
+  });
+
+  it("refuses an export larger than the transport can carry", async () => {
+    process.env.EXPORT_MAX_BYTES = "200";
+
+    const result = (await sdk.trigger("mem::export", {})) as {
+      error: string;
+      bytes: number;
+      limitBytes: number;
+      totalSessions: number;
+      hint: string;
+    };
+
+    expect(result.error).toBe("export_too_large");
+    expect(result.limitBytes).toBe(200);
+    expect(result.bytes).toBeGreaterThan(200);
+    expect(result.totalSessions).toBe(1);
+    expect(result.hint).toContain("maxSessions");
+  });
+
+  it("returns the corpus normally when it fits", async () => {
+    process.env.EXPORT_MAX_BYTES = String(10 * 1024 * 1024);
+
+    const result = (await sdk.trigger("mem::export", {})) as ExportData;
+
+    expect(result.sessions.length).toBe(1);
+    expect((result as unknown as { error?: string }).error).toBeUndefined();
+  });
+});
+
+describe("Export collection pagination", () => {
+  let sdk: ReturnType<typeof mockSdk>;
+  let kv: ReturnType<typeof mockKV>;
+
+  beforeEach(async () => {
+    sdk = mockSdk();
+    kv = mockKV();
+    registerExportImportFunction(sdk as never, kv as never);
+    await kv.set("mem:sessions", "ses_1", testSession);
+    for (let i = 0; i < 7; i++) {
+      await kv.set("mem:memories", `mem_${i}`, { ...testMemory, id: `mem_${i}` });
+    }
+    for (let i = 0; i < 5; i++) {
+      await kv.set("mem:graph:nodes", `node_${i}`, { id: `node_${i}`, label: `n${i}` });
+    }
+  });
+
+  it("returns every collection in full when no collection limit is given", async () => {
+    const result = (await sdk.trigger("mem::export", {})) as ExportData;
+
+    expect(result.memories.length).toBe(7);
+    expect(result.graphNodes?.length).toBe(5);
+    expect(result.collectionPagination).toBeUndefined();
+  });
+
+  it("bounds every collection, not just sessions, when a collection limit is given", async () => {
+    const result = (await sdk.trigger("mem::export", {
+      collectionLimit: 3,
+    })) as ExportData;
+
+    expect(result.memories.length).toBe(3);
+    expect(result.graphNodes?.length).toBe(3);
+    expect(result.collectionPagination?.limit).toBe(3);
+    expect(result.collectionPagination?.offset).toBe(0);
+    expect(result.collectionPagination?.totals["memories"]).toBe(7);
+    expect(result.collectionPagination?.totals["graphNodes"]).toBe(5);
+    expect(result.collectionPagination?.hasMore).toBe(true);
+  });
+
+  it("walks a collection to its end across pages", async () => {
+    const page2 = (await sdk.trigger("mem::export", {
+      collectionLimit: 3,
+      collectionOffset: 3,
+    })) as ExportData;
+    expect(page2.memories.length).toBe(3);
+    expect(page2.collectionPagination?.hasMore).toBe(true);
+
+    const page3 = (await sdk.trigger("mem::export", {
+      collectionLimit: 3,
+      collectionOffset: 6,
+    })) as ExportData;
+    expect(page3.memories.length).toBe(1);
+    expect(page3.collectionPagination?.hasMore).toBe(false);
   });
 });
 
