@@ -5,6 +5,7 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { registerExportImportFunction } from "../src/functions/export-import.js";
+import { instrumentedKV } from "./helpers/instrumented-kv.js";
 import type {
   Session,
   CompressedObservation,
@@ -266,5 +267,59 @@ describe("Export/Import Functions", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("Unsupported export version");
+  });
+});
+
+describe("Export fan-out", () => {
+  function seedSessions(
+    kv: ReturnType<typeof instrumentedKV>,
+    count: number,
+  ): void {
+    for (let i = 0; i < count; i++) {
+      const sessionId = `ses_${i}`;
+      kv.seed("mem:sessions", sessionId, {
+        ...testSession,
+        id: sessionId,
+        project: `project_${i % 3}`,
+      });
+      kv.seed(`mem:obs:${sessionId}`, `obs_${i}`, {
+        ...testObs,
+        id: `obs_${i}`,
+        sessionId,
+      });
+    }
+    kv.resetInstrumentation();
+  }
+
+  it("bounds concurrent KV calls when exporting many sessions", async () => {
+    const kv = instrumentedKV({ latencyMs: 2 });
+    const sdk = mockSdk();
+    registerExportImportFunction(sdk as never, kv as never);
+    seedSessions(kv, 40);
+
+    await sdk.trigger("mem::export", {});
+
+    // 40 sessions must not become 40 simultaneous state::list calls: their
+    // responses land together and the back-to-back frame parses are what
+    // starve the worker heartbeat.
+    expect(kv.peakInFlight).toBeLessThanOrEqual(6);
+  });
+
+  it("honours EXPORT_KV_CONCURRENCY", async () => {
+    const previous = process.env.EXPORT_KV_CONCURRENCY;
+    process.env.EXPORT_KV_CONCURRENCY = "2";
+    try {
+      const kv = instrumentedKV({ latencyMs: 2 });
+      const sdk = mockSdk();
+      registerExportImportFunction(sdk as never, kv as never);
+      seedSessions(kv, 12);
+
+      await sdk.trigger("mem::export", {});
+
+      expect(kv.peakInFlight).toBeLessThanOrEqual(2);
+    } finally {
+      if (previous === undefined) delete process.env.EXPORT_KV_CONCURRENCY;
+      else process.env.EXPORT_KV_CONCURRENCY = previous;
+    }
   });
 });

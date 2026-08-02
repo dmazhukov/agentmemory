@@ -30,6 +30,23 @@ import { StateKV } from "../state/kv.js";
 import { VERSION } from "../version.js";
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
+import { mapBounded } from "../utils/bounded-map.js";
+
+// Concurrent in-flight KV round-trips while assembling an export. A full
+// dump fans out one state::list per session plus 16 more for the
+// top-level collections; unbounded that is 50+ simultaneous invocations
+// against a single state adapter. Their responses land together and the
+// resulting frame parses run back-to-back with no yield between them,
+// which starves the worker heartbeat and gets the in-flight call killed
+// (upstream #1124, #1100, #890). 6 matches SUMMARIZE_CHUNK_CONCURRENCY.
+const EXPORT_KV_CONCURRENCY_DEFAULT = 6;
+
+function getExportKvConcurrency(): number {
+  const raw = process.env.EXPORT_KV_CONCURRENCY;
+  if (!raw) return EXPORT_KV_CONCURRENCY_DEFAULT;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : EXPORT_KV_CONCURRENCY_DEFAULT;
+}
 
 export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::export", 
@@ -46,14 +63,17 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
       const memories = await kv.list<Memory>(KV.memories);
       const summaries = await kv.list<SessionSummary>(KV.summaries);
 
+      const concurrency = getExportKvConcurrency();
+
       const observations: Record<string, CompressedObservation[]> = {};
-      const obsResults = await Promise.all(
-        paginatedSessions.map((session) =>
+      const obsResults = await mapBounded(
+        paginatedSessions,
+        concurrency,
+        (session) =>
           kv
             .list<CompressedObservation>(KV.observations(session.id))
             .catch(() => [] as CompressedObservation[])
             .then((obs) => ({ sessionId: session.id, obs })),
-        ),
       );
       for (const { sessionId, obs } of obsResults) {
         if (obs.length > 0) {
@@ -63,14 +83,56 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
 
       const profiles: ProjectProfile[] = [];
       const uniqueProjects = [...new Set(paginatedSessions.map((s) => s.project))];
-      const profileResults = await Promise.all(
-        uniqueProjects.map((project) =>
+      const profileResults = await mapBounded(
+        uniqueProjects,
+        concurrency,
+        (project) =>
           kv.get<ProjectProfile>(KV.profiles, project).catch(() => null),
-        ),
       );
       for (const profile of profileResults) {
         if (profile) profiles.push(profile);
       }
+
+      const collectionLoaders: Array<() => Promise<unknown[]>> = [
+        () => kv.list<GraphNode>(KV.graphNodes).catch(() => []),
+        () => kv.list<GraphEdge>(KV.graphEdges).catch(() => []),
+        () => kv.list<SemanticMemory>(KV.semantic).catch(() => []),
+        () => kv.list<ProceduralMemory>(KV.procedural).catch(() => []),
+        () => kv.list<Action>(KV.actions).catch(() => []),
+        () => kv.list<ActionEdge>(KV.actionEdges).catch(() => []),
+        () => kv.list<Sentinel>(KV.sentinels).catch(() => []),
+        () => kv.list<Sketch>(KV.sketches).catch(() => []),
+        () => kv.list<Crystal>(KV.crystals).catch(() => []),
+        () => kv.list<Facet>(KV.facets).catch(() => []),
+        () => kv.list<Lesson>(KV.lessons).catch(() => []),
+        () => kv.list<Insight>(KV.insights).catch(() => []),
+        () => kv.list<Routine>(KV.routines).catch(() => []),
+        () => kv.list<Signal>(KV.signals).catch(() => []),
+        () => kv.list<Checkpoint>(KV.checkpoints).catch(() => []),
+        () => kv.list<AccessLogExport>(KV.accessLog).catch(() => []),
+      ];
+
+      // mapBounded returns a homogeneous R[]; this list is a fixed-shape
+      // tuple, so the element types are asserted back here. The loader
+      // order and the destructuring below must stay in lockstep.
+      type CollectionResults = [
+        GraphNode[],
+        GraphEdge[],
+        SemanticMemory[],
+        ProceduralMemory[],
+        Action[],
+        ActionEdge[],
+        Sentinel[],
+        Sketch[],
+        Crystal[],
+        Facet[],
+        Lesson[],
+        Insight[],
+        Routine[],
+        Signal[],
+        Checkpoint[],
+        AccessLogExport[],
+      ];
 
       const [
         graphNodes,
@@ -89,24 +151,9 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         signals,
         checkpoints,
         accessLogs,
-      ] = await Promise.all([
-        kv.list<GraphNode>(KV.graphNodes).catch(() => []),
-        kv.list<GraphEdge>(KV.graphEdges).catch(() => []),
-        kv.list<SemanticMemory>(KV.semantic).catch(() => []),
-        kv.list<ProceduralMemory>(KV.procedural).catch(() => []),
-        kv.list<Action>(KV.actions).catch(() => []),
-        kv.list<ActionEdge>(KV.actionEdges).catch(() => []),
-        kv.list<Sentinel>(KV.sentinels).catch(() => []),
-        kv.list<Sketch>(KV.sketches).catch(() => []),
-        kv.list<Crystal>(KV.crystals).catch(() => []),
-        kv.list<Facet>(KV.facets).catch(() => []),
-        kv.list<Lesson>(KV.lessons).catch(() => []),
-        kv.list<Insight>(KV.insights).catch(() => []),
-        kv.list<Routine>(KV.routines).catch(() => []),
-        kv.list<Signal>(KV.signals).catch(() => []),
-        kv.list<Checkpoint>(KV.checkpoints).catch(() => []),
-        kv.list<AccessLogExport>(KV.accessLog).catch(() => []),
-      ]);
+      ] = (await mapBounded(collectionLoaders, concurrency, (load) =>
+        load(),
+      )) as CollectionResults;
 
       const exportData: ExportData = {
         version: VERSION,
