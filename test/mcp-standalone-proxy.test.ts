@@ -210,6 +210,37 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
     expect(out.results[0].content).toBe("local only");
   });
 
+  it("carries a 4xx response body into the failure it reports", async () => {
+    const hint =
+      "Export 18620005 bytes exceeds the 15728640 byte transport limit. Re-request in pages with ?maxSessions= and ?offset=.";
+    installFetch((url) => {
+      if (url.endsWith("/agentmemory/livez")) {
+        return new Response("ok", { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({ error: "export_too_large", hint }),
+        { status: 413, statusText: "Payload Too Large" },
+      );
+    });
+    const written: string[] = [];
+    const spy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        written.push(String(chunk));
+        return true;
+      });
+
+    try {
+      await handleToolCall("memory_export", {}, new InMemoryKV(undefined));
+    } finally {
+      spy.mockRestore();
+    }
+
+    // Without the body the operator gets "413 Payload Too Large" and no
+    // way to find out which parameters make the request succeed.
+    expect(written.join("")).toContain("?maxSessions=");
+  });
+
   it("invalidates the handle on proxy failure, so the next call re-probes", async () => {
     let probeCount = 0;
     let serverUp = true;

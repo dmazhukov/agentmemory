@@ -37,10 +37,10 @@ import { mapBounded } from "../utils/bounded-map.js";
 // Concurrent in-flight KV round-trips while assembling an export. A full
 // dump fans out one state::list per session plus 16 more for the
 // top-level collections; unbounded that is 50+ simultaneous invocations
-// against a single state adapter. Their responses land together and the
-// resulting frame parses run back-to-back with no yield between them,
-// which starves the worker heartbeat and gets the in-flight call killed
-// (upstream #1124, #1100, #890). 6 matches SUMMARIZE_CHUNK_CONCURRENCY.
+// against a single state adapter, whose responses are all resident at
+// once immediately before the payload is serialized. Windowing caps that
+// peak. It does not prevent the oversized-payload failure — that is what
+// EXPORT_MAX_BYTES below is for. 6 matches SUMMARIZE_CHUNK_CONCURRENCY.
 const EXPORT_KV_CONCURRENCY_DEFAULT = 6;
 
 function getExportKvConcurrency(): number {
@@ -86,6 +86,18 @@ function getExportMaxBytes(): number {
   if (!raw) return EXPORT_MAX_BYTES_DEFAULT;
   const n = parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : EXPORT_MAX_BYTES_DEFAULT;
+}
+
+// mem::export answers with either an ExportData or this refusal, so every
+// surface that triggers it has to branch. Shared so the REST trigger and
+// the MCP tool cannot drift into disagreeing about what a refusal looks
+// like.
+export function isExportTooLarge(value: unknown): value is ExportTooLarge {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { error?: unknown }).error === "export_too_large"
+  );
 }
 
 export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {

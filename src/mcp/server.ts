@@ -11,6 +11,7 @@ import type {
 import { getVisibleTools } from "./tools-registry.js";
 import { timingSafeCompare } from "../auth.js";
 import { getAgentId, isAgentScopeIsolated } from "../config.js";
+import { isExportTooLarge } from "../functions/export-import.js";
 
 type McpResponse = {
   status_code: number;
@@ -363,6 +364,12 @@ export function registerMcpEndpoints(
 
           case "memory_export": {
             const result = await sdk.trigger({ function_id: "mem::export", payload: {} });
+            // Without this branch the refusal ships as a 200 whose text
+            // body happens to be an error object, which reads to a client
+            // as a successful export of nonsense.
+            if (isExportTooLarge(result)) {
+              return { status_code: 413, body: result };
+            }
             return {
               status_code: 200,
               body: {

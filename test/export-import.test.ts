@@ -4,7 +4,10 @@ vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { registerExportImportFunction } from "../src/functions/export-import.js";
+import {
+  registerExportImportFunction,
+  isExportTooLarge,
+} from "../src/functions/export-import.js";
 import { getSearchIndex } from "../src/functions/search.js";
 import { instrumentedKV } from "./helpers/instrumented-kv.js";
 import type {
@@ -325,6 +328,35 @@ describe("Export/Import Functions", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("Unsupported export version");
+  });
+});
+
+describe("isExportTooLarge", () => {
+  it("recognises the refusal mem::export returns", () => {
+    expect(
+      isExportTooLarge({
+        error: "export_too_large",
+        bytes: 1,
+        limitBytes: 0,
+        totalSessions: 0,
+        hint: "",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not mistake a real export for a refusal", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerExportImportFunction(sdk as never, kv as never);
+    await kv.set("mem:sessions", "ses_1", testSession);
+
+    expect(isExportTooLarge(await sdk.trigger("mem::export", {}))).toBe(false);
+  });
+
+  it("rejects values that merely look object-ish", () => {
+    for (const value of [null, undefined, "export_too_large", 0, [], {}]) {
+      expect(isExportTooLarge(value)).toBe(false);
+    }
   });
 });
 

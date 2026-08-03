@@ -147,8 +147,15 @@ export async function resolveHandle(): Promise<Handle> {
             signal: AbortSignal.timeout(CALL_TIMEOUT_MS),
           });
           if (!res.ok) {
+            // The body of a 4xx is the actionable half: an oversized
+            // export names the paging parameters that get around it, and
+            // status text alone strands the caller with "413" and no way
+            // forward. Truncated so a large error page cannot become the
+            // exception message.
+            const detail = await res.text().catch(() => "");
+            const suffix = detail ? `: ${detail.slice(0, 500)}` : "";
             throw new Error(
-              `${init?.method || "GET"} ${path} -> ${res.status} ${res.statusText}`,
+              `${init?.method || "GET"} ${path} -> ${res.status} ${res.statusText}${suffix}`,
             );
           }
           const text = await res.text();

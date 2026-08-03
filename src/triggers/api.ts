@@ -12,6 +12,7 @@ import { isSlotsEnabled, isReflectEnabled } from "../functions/slots.js";
 import { renderViewerDocument } from "../viewer/document.js";
 import { getBoundViewerPort, getViewerSkipped } from "../viewer/server.js";
 import { MAX_FILES_UPPER_BOUND } from "../functions/replay.js";
+import { isExportTooLarge } from "../functions/export-import.js";
 import { logger } from "../logger.js";
 import {
   isGraphExtractionEnabled,
@@ -1332,11 +1333,7 @@ export function registerApiTriggers(
       // carry. Surfacing that as 413 turns what used to be a dropped
       // worker — and a ~1s outage across every endpoint — into a single
       // failed request that says how to page around it.
-      if (
-        result &&
-        typeof result === "object" &&
-        (result as { error?: unknown }).error === "export_too_large"
-      ) {
+      if (isExportTooLarge(result)) {
         return { status_code: 413, body: result };
       }
       return { status_code: 200, body: result };
