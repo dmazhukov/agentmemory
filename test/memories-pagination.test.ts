@@ -35,6 +35,13 @@ describe("memories + export pagination (#544)", () => {
     );
   });
 
+  it("api::export forwards the collections allowlist verbatim", () => {
+    expect(api).toMatch(/query_params\?\.\["collections"\]/);
+    // Forwarded as the raw string: mem::export owns the parsing, so an
+    // empty value stays distinguishable from an absent parameter.
+    expect(api).toMatch(/payload\.collections\s*=\s*rawCollections/);
+  });
+
   it("viewer dashboard caps memories?latest fetch with limit", () => {
     const viewer = readFileSync("src/viewer/index.html", "utf-8");
     expect(viewer).toMatch(/memories\?latest=true&limit=500/);

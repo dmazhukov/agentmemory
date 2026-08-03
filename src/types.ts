@@ -311,11 +311,16 @@ export interface ExportPagination {
 // observations hanging off them, which left every other collection
 // unbounded: a corpus could reach a size where even ?maxSessions=1 was
 // undeliverable, making the export permanently impossible at any
-// parameter. hasMore is true when any single collection has more rows.
+// parameter.
 export interface ExportCollectionPagination {
   offset: number;
   limit: number;
+  // Every collection, always — including the ones a `collections`
+  // allowlist kept out of this response. Clients read totals for corpus
+  // counts, not only to size their own walk.
   totals: Record<string, number>;
+  // True when any *selected* collection has rows past this window. With
+  // no allowlist that is every collection, as before.
   hasMore: boolean;
 }
 

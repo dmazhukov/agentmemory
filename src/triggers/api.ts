@@ -1293,11 +1293,13 @@ export function registerApiTriggers(
         offset?: number;
         collectionLimit?: number;
         collectionOffset?: number;
+        collections?: string;
       } = {};
       const rawMax = req.query_params?.["maxSessions"];
       const rawOffset = req.query_params?.["offset"];
       const rawCollectionLimit = req.query_params?.["collectionLimit"];
       const rawCollectionOffset = req.query_params?.["collectionOffset"];
+      const rawCollections = req.query_params?.["collections"];
       if (typeof rawMax === "string") {
         const n = Number(rawMax);
         if (Number.isInteger(n) && n > 0) payload.maxSessions = n;
@@ -1313,6 +1315,12 @@ export function registerApiTriggers(
       if (typeof rawCollectionOffset === "string") {
         const n = Number(rawCollectionOffset);
         if (Number.isInteger(n) && n >= 0) payload.collectionOffset = n;
+      }
+      // Forwarded raw, empty value included: mem::export owns the name
+      // vocabulary, and only it can tell "?collections=" (an explicit
+      // empty selection) from an absent parameter (every collection).
+      if (typeof rawCollections === "string") {
+        payload.collections = rawCollections;
       }
       const result = await sdk.trigger({
         function_id: "mem::export",

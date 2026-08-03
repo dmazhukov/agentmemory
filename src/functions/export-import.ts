@@ -64,13 +64,56 @@ function getExportMaxBytes(): number {
   return Number.isFinite(n) && n > 0 ? n : EXPORT_MAX_BYTES_DEFAULT;
 }
 
+// Every collection mem::export can put in the payload — the vocabulary
+// `?collections=` is matched against. sessions, observations and profiles
+// are absent on purpose: they are windowed by maxSessions/offset, and
+// profiles are derived from the session page rather than listed.
+const EXPORT_COLLECTION_NAMES: ReadonlySet<string> = new Set([
+  "memories",
+  "summaries",
+  "graphNodes",
+  "graphEdges",
+  "semanticMemories",
+  "proceduralMemories",
+  "actions",
+  "actionEdges",
+  "sentinels",
+  "sketches",
+  "crystals",
+  "facets",
+  "lessons",
+  "insights",
+  "routines",
+  "signals",
+  "checkpoints",
+  "accessLogs",
+]);
+
+// Absent means every collection — the behaviour before this parameter
+// existed. Present means the caller chose, so an empty or all-unknown
+// list selects nothing: falling back to everything there would turn a
+// client-side typo into the full multi-megabyte dump this parameter
+// exists to avoid. Unknown names are dropped rather than refused so a
+// client can name a collection an older build does not have and still
+// get the ones it does.
+function parseCollections(raw: unknown): ReadonlySet<string> | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const names = Array.isArray(raw) ? raw : String(raw).split(",");
+  return new Set(
+    names
+      .map((name) => String(name).trim())
+      .filter((name) => EXPORT_COLLECTION_NAMES.has(name)),
+  );
+}
+
 export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
-  sdk.registerFunction("mem::export", 
+  sdk.registerFunction("mem::export",
     async (data?: {
       maxSessions?: number;
       offset?: number;
       collectionLimit?: number;
       collectionOffset?: number;
+      collections?: string[] | string;
     }) => {
       const rawMax = Number(data?.maxSessions);
       const maxSessions = Number.isFinite(rawMax) && rawMax > 0 ? Math.min(Math.floor(rawMax), 1000) : undefined;
@@ -87,12 +130,19 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
           ? Math.floor(rawCollectionOffset)
           : 0;
 
+      const collections = parseCollections(data?.collections);
+      const isSelected = (name: string): boolean =>
+        collections === undefined || collections.has(name);
+
       // Records every collection's full size before slicing, so the
       // caller can tell how far it still has to page even though the
-      // response only carries one window.
+      // response only carries one window. Deselected collections are
+      // counted too: totals are what clients read for corpus size, and
+      // an allowlist is about what travels, not about what is known.
       const collectionTotals: Record<string, number> = {};
       const sliceCollection = <T>(name: string, rows: T[]): T[] => {
         collectionTotals[name] = rows.length;
+        if (!isSelected(name)) return [];
         if (collectionLimit === undefined) return rows;
         return rows.slice(collectionOffset, collectionOffset + collectionLimit);
       };
@@ -244,8 +294,13 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
           offset: collectionOffset,
           limit: collectionLimit,
           totals: collectionTotals,
-          hasMore: Object.values(collectionTotals).some(
-            (total) => collectionOffset + collectionLimit < total,
+          // Only the selected collections can move the flag: a client
+          // that asked for six of eighteen has to be able to stop on
+          // hasMore instead of hand-rolling an early stop against
+          // totals, and graphEdges still having rows is not its problem.
+          hasMore: Object.entries(collectionTotals).some(
+            ([name, total]) =>
+              isSelected(name) && collectionOffset + collectionLimit < total,
           ),
         };
       }
@@ -271,7 +326,7 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
           bytes: serializedBytes,
           limitBytes: maxBytes,
           totalSessions: allSessions.length,
-          hint: `Export ${serializedBytes} bytes exceeds the ${maxBytes} byte transport limit. Re-request in pages with ?maxSessions= and ?offset=, or narrow the payload with ?collectionLimit= and ?collectionOffset=.`,
+          hint: `Export ${serializedBytes} bytes exceeds the ${maxBytes} byte transport limit. Re-request in pages with ?maxSessions= and ?offset=, or narrow the payload with ?collectionLimit= and ?collectionOffset=, or ask for a subset with ?collections=.`,
         };
         return tooLarge;
       }
@@ -283,6 +338,10 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         memories: memories.length,
         summaries: summaries.length,
         bytes: serializedBytes,
+        // Logged post-filter so a caller whose names all got dropped can
+        // see an empty selection here rather than guess why the payload
+        // came back empty while totals looked healthy.
+        collections: collections && [...collections],
       });
 
       return exportData;
