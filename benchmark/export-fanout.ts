@@ -1,23 +1,21 @@
-// Phase-0 measurement for the mem::export fan-out (see
-// docs/superpowers/specs/2026-08-02-export-fanout-and-audit-retention-design.md).
+// Measures a full mem::export against a synthetic corpus: peak simultaneous
+// KV calls, event-loop stall, serialized payload size, wall clock.
 //
-// Answers one question before any fix is written: what actually stalls the
-// event loop during a full export — the fan-out storm (50+ simultaneous
-// state::list calls against one adapter) or a single oversized list whose
-// WS frame blocks the loop while it is parsed?
+// Payload size is the number that decides whether an export survives. The
+// engine's WebSocket transport drops the worker on frames past 16 MiB and the
+// drop 404s every endpoint while the worker re-registers, so EXPORT_MAX_BYTES
+// refuses the dump before it reaches the transport. Use this to find the
+// corpus size at which a deployment crosses that line.
 //
-// The distinction decides the fix. Bounding concurrency helps the first and
-// does nothing for the second, and src/state/schema.ts:25-29 records that
-// the second is real at scale ("37MB WS frame parse blocks heartbeat,
-// worker is declared dead before any Promise.race timer can fire").
-//
-// The in-memory fake KV bypasses iii-sdk's WS layer entirely, so it cannot
-// reproduce that parse cost on its own. SIMULATE_FRAME_PARSE re-introduces
-// it by round-tripping every list result through JSON, which is the same
-// synchronous work the real worker does on an incoming frame.
+// The in-memory fake KV bypasses iii-sdk's WS layer, so the synchronous cost
+// of parsing a response frame is absent by construction.
+// SIMULATE_FRAME_PARSE re-introduces it by round-tripping every list result
+// through JSON — without it the event-loop numbers describe a workload the
+// daemon never runs.
 //
 // Run: node --import tsx benchmark/export-fanout.ts
-// Env: EXPORT_KV_CONCURRENCY, SIMULATE_FRAME_PARSE=0 to disable the parse.
+// Env: EXPORT_KV_CONCURRENCY, EXPORT_MAX_BYTES,
+//      SIMULATE_FRAME_PARSE=0 to disable the parse.
 
 import { registerExportImportFunction } from "../src/functions/export-import.js";
 import { instrumentedKV } from "../test/helpers/instrumented-kv.js";
