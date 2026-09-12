@@ -25,11 +25,6 @@ type TranscriptLine = {
   message?: { role?: string; content?: string | TranscriptBlock[] };
 };
 
-// Two transcript dialects reach this hook. Cursor writes the role at the top
-// level and always wraps content in typed blocks; Claude Code writes
-// `type: "user"` with the role nested under `message`, and a plain user turn
-// carries `content` as a bare string. Matching only the first shape silently
-// backfilled nothing from a Claude Code session.
 function isUserTurn(msg: TranscriptLine): boolean {
   if (msg.isSidechain) return false;
   return (
@@ -37,8 +32,6 @@ function isUserTurn(msg: TranscriptLine): boolean {
   );
 }
 
-// A Claude Code user turn is either the bare prompt string or a block array
-// that is mostly tool_result records; only text blocks are prompts.
 function turnTexts(content: string | TranscriptBlock[] | undefined): string[] {
   if (typeof content === "string") return [content];
   if (!Array.isArray(content)) return [];
