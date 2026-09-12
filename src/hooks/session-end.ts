@@ -17,6 +17,40 @@ function authHeaders(): Record<string, string> {
   return h;
 }
 
+type TranscriptBlock = { type?: string; text?: string };
+type TranscriptLine = {
+  role?: string;
+  type?: string;
+  isSidechain?: boolean;
+  message?: { role?: string; content?: string | TranscriptBlock[] };
+};
+
+// Two transcript dialects reach this hook. Cursor writes the role at the top
+// level and always wraps content in typed blocks; Claude Code writes
+// `type: "user"` with the role nested under `message`, and a plain user turn
+// carries `content` as a bare string. Matching only the first shape silently
+// backfilled nothing from a Claude Code session.
+function isUserTurn(msg: TranscriptLine): boolean {
+  if (msg.isSidechain) return false;
+  return (
+    msg.role === "user" || msg.type === "user" || msg.message?.role === "user"
+  );
+}
+
+// A Claude Code user turn is either the bare prompt string or a block array
+// that is mostly tool_result records; only text blocks are prompts.
+function turnTexts(content: string | TranscriptBlock[] | undefined): string[] {
+  if (typeof content === "string") return [content];
+  if (!Array.isArray(content)) return [];
+  const texts: string[] = [];
+  for (const block of content) {
+    if (block?.type === "text" && typeof block.text === "string") {
+      texts.push(block.text);
+    }
+  }
+  return texts;
+}
+
 function extractTranscriptPrompts(data: Record<string, unknown>): string[] {
   const path = data.transcript_path;
   if (typeof path !== "string" || !path.endsWith(".jsonl")) return [];
@@ -29,21 +63,17 @@ function extractTranscriptPrompts(data: Record<string, unknown>): string[] {
   const prompts: string[] = [];
   for (const line of raw.split("\n")) {
     if (!line.trim()) continue;
-    let msg: {
-      role?: string;
-      message?: { content?: Array<{ type?: string; text?: string }> };
-    };
+    let msg: TranscriptLine;
     try {
       msg = JSON.parse(line);
     } catch {
       continue;
     }
-    if (msg.role !== "user") continue;
-    for (const block of msg.message?.content ?? []) {
+    if (!isUserTurn(msg)) continue;
+    for (const raw of turnTexts(msg.message?.content)) {
       if (prompts.length >= 50) return prompts;
-      if (block.type !== "text" || typeof block.text !== "string") continue;
-      const m = block.text.match(/<user_query>\n?([\s\S]*?)\n?<\/user_query>/);
-      const text = (m ? m[1] : block.text).trim();
+      const m = raw.match(/<user_query>\n?([\s\S]*?)\n?<\/user_query>/);
+      const text = (m ? m[1] : raw).trim();
       if (text) prompts.push(text.slice(0, 8000));
     }
   }
