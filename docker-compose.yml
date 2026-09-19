@@ -18,7 +18,7 @@ services:
     restart: "no"
 
   iii-engine:
-    # Pinned to v0.11.2 — the last engine that runs agentmemory's current
+    # Pinned to v0.19.7 — the last engine that runs agentmemory's current
     # direct-registration worker cleanly. v0.11.6 introduces a new sandbox-everything-
     # via-`iii worker add` model that agentmemory hasn't been refactored
     # for yet; the architectural mismatch surfaces as EPIPE reconnect
@@ -27,7 +27,7 @@ services:
     #
     # Override per-shell or via .env file:
     #   AGENTMEMORY_III_VERSION=0.11.7 docker compose up
-    image: iiidev/iii:${AGENTMEMORY_III_VERSION:-0.11.2}
+    image: iiidev/iii:${AGENTMEMORY_III_VERSION:-0.19.7}
     user: "${AGENTMEMORY_DOCKER_UID:-65532}:${AGENTMEMORY_DOCKER_GID:-65532}"
     depends_on:
       iii-init:
