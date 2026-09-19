@@ -112,18 +112,14 @@ if (args.includes("--version") || args.includes("-V")) {
   process.exit(0);
 }
 
-// Pinned iii-engine version. The unpinned `install.iii.dev/iii/main/install.sh`
-// script tracks `latest`, which made every fresh agentmemory install pull
-// engine 0.11.6 — and 0.11.6 introduces a new sandbox-everything-via-
-// `iii worker add` worker model that agentmemory hasn't been refactored
-// for yet (the CLI still registers its worker directly through the SDK). The
-// architectural mismatch surfaces as EPIPE reconnect loops and empty
-// search results after save. Pin to v0.11.2 — the last engine that runs
-// agentmemory's current worker model cleanly — until the refactor lands.
-// Override env var AGENTMEMORY_III_VERSION lets users on the sandbox
-// model already point at a newer engine without us cutting a release.
+// Pinned iii-engine version. Upstream pins v0.11.2 against the 0.11.6 worker
+// model; this fork pins v0.19.7 because it was measured on a copy of the prod
+// store instead (2026-09-19: same counts, save-then-search, no EPIPE, and
+// v0.11.2 still reads what v0.19.7 wrote, so rollback is a binary swap).
+// `iii-sdk` in package.json must stay on this same version — engine and SDK
+// speak one protocol. AGENTMEMORY_III_VERSION overrides without a release.
 const IIPINNED_VERSION =
-  process.env["AGENTMEMORY_III_VERSION"] || "0.11.2";
+  process.env["AGENTMEMORY_III_VERSION"] || "0.19.7";
 
 // Map Node platform/arch → the asset name iii-hq/iii ships under
 // https://github.com/iii-hq/iii/releases/download/iii/v<version>/<asset>
@@ -150,7 +146,7 @@ function iiiReleaseAsset(): string | null {
 function iiiReleaseUrl(): string | null {
   const asset = iiiReleaseAsset();
   if (!asset) return null;
-  // Tag name is monorepo-prefixed: `iii/v0.11.2`. Slash is URL-encoded
+  // Tag name is monorepo-prefixed: `iii/v0.19.7`. Slash is URL-encoded
   // by GitHub when serving the download path, hence `iii/v...` not `iii%2Fv...`.
   return `https://github.com/iii-hq/iii/releases/download/iii/v${IIPINNED_VERSION}/${asset}`;
 }
@@ -523,9 +519,9 @@ function whichBinary(name: string): string | null {
 // Private install location agentmemory manages itself. Sits under the
 // agentmemory state dir (~/.agentmemory/bin) so the pinned engine stays
 // isolated from a user-managed iii on PATH or in ~/.local/bin. A
-// fresh box with iii 0.16.1 already on PATH refused to boot because the
-// hard-pin enforcer told users to overwrite their global install with
-// v0.11.2. Private install resolves the conflict without touching their
+// fresh box with a different iii already on PATH refused to boot because the
+// hard-pin enforcer told users to overwrite their global install with the
+// pinned one. Private install resolves the conflict without touching their
 // existing iii.
 function agentmemoryBinDir(): string {
   if (IS_WINDOWS) {
@@ -3177,8 +3173,8 @@ async function runUpgrade() {
         label: "Refreshing dependencies (pnpm install)",
       });
       requireSuccess(installOk, "pnpm install");
-      runCommand(pnpmBin, ["up", "iii-sdk@0.11.2"], {
-        label: "Pinning iii-sdk@0.11.2",
+      runCommand(pnpmBin, ["up", "iii-sdk@0.19.7"], {
+        label: "Pinning iii-sdk@0.19.7",
         optional: true,
       });
     } else if (npmBin) {
@@ -3186,8 +3182,8 @@ async function runUpgrade() {
         label: "Refreshing dependencies (npm install)",
       });
       requireSuccess(installOk, "npm install");
-      runCommand(npmBin, ["install", "iii-sdk@0.11.2"], {
-        label: "Pinning iii-sdk@0.11.2",
+      runCommand(npmBin, ["install", "iii-sdk@0.19.7"], {
+        label: "Pinning iii-sdk@0.19.7",
         optional: true,
       });
     } else {
