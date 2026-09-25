@@ -134,8 +134,6 @@ describe("memory_export MCP tool", () => {
     await callTool(sdk, { collections: "" });
     await callTool(sdk, {});
 
-    // An empty selection means "no collections" downstream, so dropping it
-    // here would silently turn it into a full dump.
     expect(seen).toEqual([{ collections: "" }, {}]);
   });
 

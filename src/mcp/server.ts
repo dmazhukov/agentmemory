@@ -368,12 +368,6 @@ export function registerMcpEndpoints(
           }
 
           case "memory_export": {
-            // The tool is where an agent actually reaches export, so the
-            // paging arguments have to survive this layer or a large store
-            // stays unreachable from MCP. `collections` is forwarded raw,
-            // empty string included: mem::export reads an empty selection
-            // as "no collections", which only stays distinguishable from
-            // an absent argument if this layer does not drop it.
             const exportPayload: {
               maxSessions?: number;
               offset?: number;

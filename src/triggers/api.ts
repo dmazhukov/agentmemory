@@ -1345,9 +1345,6 @@ export function registerApiTriggers(
         const n = Number(rawCollectionOffset);
         if (Number.isInteger(n) && n >= 0) payload.collectionOffset = n;
       }
-      // Forwarded raw, empty value included: mem::export owns the name
-      // vocabulary, and only it can tell "?collections=" (an explicit
-      // empty selection) from an absent parameter (every collection).
       if (typeof rawCollections === "string") {
         payload.collections = rawCollections;
       }

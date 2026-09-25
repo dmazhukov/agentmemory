@@ -137,10 +137,6 @@ describe("Export/Import Functions", () => {
   it("export without params returns the complete corpus unchanged", async () => {
     const result = (await sdk.trigger("mem::export", {})) as ExportData;
 
-    // Pins the contract every consumer depends on: no query params means
-    // the whole corpus, in exactly this shape. Empty collections stay
-    // absent rather than becoming empty arrays, and no pagination block
-    // appears. exportedAt is the only time-varying field.
     const { exportedAt, ...stable } = result;
     expect(exportedAt).toBeDefined();
     expect(stable).toEqual({
@@ -398,9 +394,6 @@ describe("Export collection allowlist", () => {
     for (let i = 0; i < 7; i++) {
       await kv.set("mem:memories", `mem_${i}`, { ...testMemory, id: `mem_${i}` });
     }
-    // graphNodes deliberately outlasts every other collection: a client
-    // that reads only memories+summaries must not be told to keep paging
-    // for rows it throws away.
     for (let i = 0; i < 20; i++) {
       await kv.set("mem:graph:nodes", `node_${i}`, { id: `node_${i}`, label: `n${i}` });
     }
