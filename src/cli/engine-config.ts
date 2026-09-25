@@ -1,4 +1,65 @@
-import { join } from "node:path";
+import { rmSync } from "node:fs";
+import { join, resolve } from "node:path";
+
+const SEEDED_BUILTIN_WORKERS = [
+  "iii-http",
+  "iii-state",
+  "iii-queue",
+  "iii-pubsub",
+  "iii-cron",
+  "iii-stream",
+  "iii-observability",
+  "iii-worker-manager",
+];
+
+export function configuredPersistDir(renderedConfig: string): string | null {
+  const lines = renderedConfig.split("\n");
+  const block = workerBlock(lines, "configuration");
+  if (!block) return null;
+  for (let i = block.start + 1; i < block.end; i++) {
+    const match = lines[i]!.trim().match(/^directory:\s*(.+?)\s*$/);
+    if (match) return match[1]!.replace(/^(['"])(.*)\1$/, "$2");
+  }
+  return null;
+}
+
+export function persistedBuiltinConfigDirs(
+  engineCwd: string,
+  renderedConfig?: string,
+): string[] {
+  const dirs = [join(engineCwd, "data", "configuration")];
+  const custom = renderedConfig ? configuredPersistDir(renderedConfig) : null;
+  if (custom) dirs.unshift(resolve(engineCwd, custom));
+  return [...new Set(dirs)];
+}
+
+export function persistedBuiltinConfigPaths(
+  engineCwd: string,
+  renderedConfig?: string,
+): string[] {
+  return persistedBuiltinConfigDirs(engineCwd, renderedConfig).flatMap((dir) =>
+    SEEDED_BUILTIN_WORKERS.map((id) => join(dir, `${id}.yaml`)),
+  );
+}
+
+export function clearPersistedBuiltinConfig(
+  engineCwd: string,
+  renderedConfig?: string,
+): string[] {
+  const cleared: string[] = [];
+  for (const path of persistedBuiltinConfigPaths(engineCwd, renderedConfig)) {
+    try {
+      rmSync(path);
+      cleared.push(path);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw new Error(
+        `could not remove persisted engine config ${path}: ${String(err)}`,
+      );
+    }
+  }
+  return cleared;
+}
 
 export interface EngineConfigOptions {
   dataDir: string;
