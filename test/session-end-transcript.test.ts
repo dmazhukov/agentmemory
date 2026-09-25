@@ -109,7 +109,6 @@ describe("session-end transcript prompt backfill", () => {
     writeFileSync(
       transcript,
       [
-        // Claude Code: role is nested, a plain turn is a bare string.
         JSON.stringify({
           type: "user",
           message: { role: "user", content: "bare claude code prompt" },
@@ -118,7 +117,6 @@ describe("session-end transcript prompt backfill", () => {
           type: "assistant",
           message: { role: "assistant", content: [{ type: "text", text: "answer" }] },
         }),
-        // Tool results arrive as user turns too and must not become prompts.
         JSON.stringify({
           type: "user",
           message: {
@@ -129,7 +127,6 @@ describe("session-end transcript prompt backfill", () => {
             ],
           },
         }),
-        // Subagent turns are not the user speaking.
         JSON.stringify({
           type: "user",
           isSidechain: true,
