@@ -486,3 +486,60 @@ describe("IndexPersistence scheduling", () => {
     expect(await kv.get(INDEX_SCOPE, META_KEY)).toBeNull();
   });
 });
+
+describe("index_persist audit gating", () => {
+  let kv: MockKV;
+  let previousFlag: string | undefined;
+
+  beforeEach(() => {
+    previousFlag = process.env.AGENTMEMORY_AUDIT_INDEX_PERSIST;
+    delete process.env.AGENTMEMORY_AUDIT_INDEX_PERSIST;
+    kv = mockKV();
+  });
+
+  afterEach(() => {
+    if (previousFlag === undefined) {
+      delete process.env.AGENTMEMORY_AUDIT_INDEX_PERSIST;
+    } else {
+      process.env.AGENTMEMORY_AUDIT_INDEX_PERSIST = previousFlag;
+    }
+  });
+
+  function indexPersistEntries(): Array<{ operation: string }> {
+    const entries: Array<{ operation: string }> = [];
+    for (const [scope, rows] of kv.store) {
+      if (!scope.startsWith("mem:audit:") || scope === "mem:audit:months") continue;
+      for (const row of rows.values()) entries.push(row as { operation: string });
+    }
+    return entries.filter((entry) => entry.operation === "index_persist");
+  }
+
+  async function migrateLegacySnapshot(): Promise<void> {
+    await writeLegacyVectorSnapshot(kv, vectorWith([["obs_a", [0.1, 0.2, 0.3]]]));
+    const loaded = await new IndexPersistence(kv as never, new VectorIndex(), { bucketSize: 16 }).load();
+    expect(loaded.state).toBe("migrated");
+  }
+
+  it("writes no index_persist audit entries by default", async () => {
+    await migrateLegacySnapshot();
+    expect(indexPersistEntries()).toEqual([]);
+  });
+
+  it.each(["1", " 1 ", "true", "TRUE", "  true  "])(
+    "writes index_persist audit entries when set to %j",
+    async (value) => {
+      process.env.AGENTMEMORY_AUDIT_INDEX_PERSIST = value;
+      await migrateLegacySnapshot();
+      expect(indexPersistEntries().length).toBeGreaterThan(0);
+    },
+  );
+
+  it.each(["0", "false", "yes", "", " "])(
+    "keeps auditing off when set to %j",
+    async (value) => {
+      process.env.AGENTMEMORY_AUDIT_INDEX_PERSIST = value;
+      await migrateLegacySnapshot();
+      expect(indexPersistEntries()).toEqual([]);
+    },
+  );
+});
