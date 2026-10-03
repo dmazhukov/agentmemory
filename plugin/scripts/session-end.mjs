@@ -39,7 +39,7 @@ function isSdkChildContext(payload) {
 	if (!payload || typeof payload !== "object") return false;
 	return payload.entrypoint === "sdk-ts";
 }
-const HARNESS_TEXT = /^(?:<(?:command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat|task-notification|system-reminder|ci-monitor-event)>|\[Request interrupted)/;
+const HARNESS_TEXT = /^(?:<(?:command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat|bash-input|bash-stdout|bash-stderr|task-notification|system-reminder|ci-monitor-event|cross-session-message|scheduled-task)(?=[\s>])|\[Request interrupted)/;
 function isUserTurn(msg) {
 	if (msg.isSidechain || msg.isMeta || msg.isCompactSummary) return false;
 	return msg.role === "user" || msg.type === "user" || msg.message?.role === "user";

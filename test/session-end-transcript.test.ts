@@ -186,6 +186,11 @@ describe("session-end transcript prompt backfill", () => {
         userLine("<system-reminder>context</system-reminder>"),
         userLine("<ci-monitor-event>build passed</ci-monitor-event>"),
         userLine("[Request interrupted by user]"),
+        userLine("<bash-input>export API_TOKEN=secret && ls</bash-input>"),
+        userLine("<bash-stdout>file.txt</bash-stdout><bash-stderr></bash-stderr>"),
+        userLine("<bash-stderr>ls: no such file</bash-stderr>"),
+        userLine('<cross-session-message from="other-session">status?</cross-session-message>'),
+        userLine('<scheduled-task name="daily-check">run the check</scheduled-task>'),
         "",
       ].join("\n"),
     );
