@@ -13,6 +13,8 @@ type TranscriptBlock = { type?: string; text?: string };
 type TranscriptLine = {
   role?: string;
   type?: string;
+  source?: string;
+  content?: unknown;
   isSidechain?: boolean;
   isMeta?: boolean;
   isCompactSummary?: boolean;
@@ -69,6 +71,13 @@ function extractTranscriptPrompts(data: Record<string, unknown>): TranscriptProm
     } catch {
       continue;
     }
+    if (msg.type === "USER_INPUT" && msg.source === "USER_EXPLICIT" && typeof msg.content === "string") {
+      if (prompts.length >= 50) return prompts;
+      const match = msg.content.match(/<USER_REQUEST>\n?([\s\S]*?)\n?<\/USER_REQUEST>/);
+      const text = (match ? match[1] : msg.content).trim();
+      if (text) prompts.push({ prompt: text.slice(0, 8000) });
+      continue;
+    }
     if (!isUserTurn(msg)) continue;
     const texts = turnTexts(msg.message?.content).map(promptText).filter(Boolean);
     const promptId = typeof msg.promptId === "string" ? msg.promptId : undefined;
@@ -123,7 +132,7 @@ async function main() {
   fetch(`${REST_URL}/agentmemory/session/end`, {
     method: "POST",
     headers: authHeaders(),
-    body: JSON.stringify({ sessionId }),
+    body: JSON.stringify({ sessionId, final: true }),
     signal: AbortSignal.timeout(30000),
   }).catch(() => {});
 

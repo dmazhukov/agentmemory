@@ -77,6 +77,14 @@ export default defineConfig([
   },
   // One entry per config block prevents tsdown from hoisting shared
   // helpers into hashed chunks across hooks.
+  {
+    entry: ["src/mcp/plugin-bridge.ts"],
+    outDir: "plugin/scripts",
+    ...shared,
+    dts: false,
+    clean: false,
+    sourcemap: false,
+  },
   ...hookEntries.map((entry) => ({
     entry: [entry],
     outDir: "dist/hooks",
