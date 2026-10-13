@@ -14,13 +14,13 @@ import { registerCompressFunction } from "../src/functions/compress.js";
 import { STREAM } from "../src/state/schema.js";
 import type { MemoryProvider, RawObservation } from "../src/types.js";
 
-const VALID_COMPRESS_XML = `<type>command_run</type>
+const VALID_COMPRESS_XML = `<observation><type>command_run</type>
 <title>Ran a probe command</title>
 <facts><fact>Ran echo probe</fact></facts>
 <narrative>The agent ran a probe command</narrative>
 <concepts><concept>testing</concept></concepts>
 <files></files>
-<importance>5</importance>`;
+<importance>5</importance></observation>`;
 
 function mockKV() {
   const store = new Map<string, Map<string, unknown>>();

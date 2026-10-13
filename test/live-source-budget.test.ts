@@ -14,7 +14,7 @@ vi.mock("../src/logger.js", () => ({ logger: { info: vi.fn(), warn: vi.fn(), err
 const sessionId = "live-source-budget";
 const scope = KV.observations(sessionId);
 const output = "captured evidence ".repeat(1500);
-const xml = "<type>file_read</type><title>Read configuration</title><facts><fact>Port configured</fact></facts><narrative>Read the configuration file.</narrative><concepts><concept>config</concept></concepts><files></files><importance>5</importance>";
+const xml = "<observation><type>file_read</type><title>Read configuration</title><facts><fact>Port configured</fact></facts><narrative>Read the configuration file.</narrative><concepts><concept>config</concept></concepts><files></files><importance>5</importance></observation>";
 
 function raw(id: string): RawObservation {
   return { id, sessionId, timestamp: "2026-09-30T00:00:00Z", hookType: "post_tool_use", toolName: "Read", toolOutput: output, raw: {} };
@@ -83,7 +83,7 @@ describe.each(["observe", "compress"] as const)("live %s source budget", (mode) 
     expect(payloadByteLength(first.source)).toBeLessThan(payloadByteLength(buildSyntheticCompression(raw("unbounded")).source));
     const second = await r.write();
     expect(second.source).toBeUndefined();
-    expect(withoutObservationSource(second)).toEqual({ ...expected, id: second.id });
+    expect(withoutObservationSource(second)).toEqual({ ...expected, id: second.id, compressedAt: second.compressedAt });
     const rows = await r.kv.list(scope);
     expect(sourceBytes(rows)).toBeLessThanOrEqual(SESSION_SOURCE_MAX_BYTES);
     expect(payloadByteLength({ result: rows })).toBeLessThan(SAFE_PAYLOAD_BYTES);
@@ -109,7 +109,7 @@ describe.each(["observe", "compress"] as const)("live %s source budget", (mode) 
     await r.kv.set(scope, seed.id, seed);
     const saved = await r.write();
     expect(saved.source).toBeUndefined();
-    expect(withoutObservationSource(saved)).toEqual({ ...expected, id: saved.id });
+    expect(withoutObservationSource(saved)).toEqual({ ...expected, id: saved.id, compressedAt: saved.compressedAt });
   });
 });
 

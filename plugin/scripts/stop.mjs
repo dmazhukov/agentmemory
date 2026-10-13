@@ -65,6 +65,7 @@ function isLoopbackUrl(url) {
 function resolveClientSecret(baseUrl, env = process.env) {
 	const fromEnv = usable(env[SECRET_KEY]);
 	if (fromEnv) return fromEnv;
+	if (env.AGENTMEMORY_CREDENTIAL_MODE === "explicit") return "";
 	if (!isLoopbackUrl(baseUrl)) return "";
 	return readEnvFileSecret() || readStoredSecret();
 }
@@ -97,7 +98,10 @@ async function main() {
 	fetch(`${REST_URL}/agentmemory/session/end`, {
 		method: "POST",
 		headers: authHeaders(),
-		body: JSON.stringify({ sessionId }),
+		body: JSON.stringify({
+			sessionId,
+			final: false
+		}),
 		signal: AbortSignal.timeout(5e3)
 	}).catch(() => {});
 	setTimeout(() => process.exit(0), 1500).unref();

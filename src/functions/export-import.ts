@@ -1,3 +1,5 @@
+import { pinGraphState } from "../state/graph-generation.js";
+import { persistGraphRecords, validateGraphRecords } from "../state/graph-ingestion.js";
 import type { IIIClient } from "iii-sdk";
 import { markCaptureEventDeleted } from "../capture/event-record.js";
 import type {
@@ -34,14 +36,13 @@ import {
   indexObservationSession,
   unindexObservationSession,
 } from "../state/obs-index.js";
-import { withKeyedLock, withKeyedLocks } from "../state/keyed-mutex.js";
+import { withKeyedLocks } from "../state/keyed-mutex.js";
 import { VERSION } from "../version.js";
 import { recordAudit } from "./audit.js";
 import { indexRecords } from "./search.js";
 import { resetLessonIndex } from "./lessons.js";
 import { logger } from "../logger.js";
 import { budgetImportedObservationSources } from "./observation-source-budget.js";
-import { boundRecordSources } from "./graph.js";
 
 // Bounded-concurrency chunk size for the import delete/write loops. A
 // "replace" or "merge" of a large export (up to MAX_TOTAL_OBSERVATIONS,
@@ -120,7 +121,7 @@ export class ExportBudget {
   }
 }
 
-export function registerExportImportFunction(sdk: IIIClient, kv: StateKV): void {
+export function registerExportImportFunction(sdk: IIIClient, state: StateKV): void {
   sdk.registerFunction("mem::export",
     async (data?: {
       maxSessions?: number;
@@ -129,6 +130,7 @@ export function registerExportImportFunction(sdk: IIIClient, kv: StateKV): void 
       collectionOffset?: number;
       collections?: string[] | string;
     }) => {
+      const kv = await pinGraphState(state);
       const rawMax = Number(data?.maxSessions);
       const maxSessions = Number.isFinite(rawMax) && rawMax > 0 ? Math.min(Math.floor(rawMax), 1000) : undefined;
       const rawOffset = Number(data?.offset);
@@ -294,6 +296,7 @@ export function registerExportImportFunction(sdk: IIIClient, kv: StateKV): void 
       exportData: ExportData;
       strategy?: "merge" | "replace" | "skip";
     }) => {
+      const kv = await pinGraphState(state);
       if (
         !data?.exportData ||
         typeof data.exportData !== "object" ||
@@ -304,7 +307,7 @@ export function registerExportImportFunction(sdk: IIIClient, kv: StateKV): void 
       const strategy = data.strategy || "merge";
       const importData = data.exportData;
 
-      const supportedVersions = new Set(["0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.6.1", "0.7.0", "0.7.2", "0.7.3", "0.7.4", "0.7.5", "0.7.6", "0.7.7", "0.7.9", "0.8.0", "0.8.1", "0.8.2", "0.8.3", "0.8.4", "0.8.5", "0.8.6", "0.8.7", "0.8.8", "0.8.9", "0.8.10", "0.8.11", "0.8.12", "0.8.13", "0.9.0", "0.9.1", "0.9.2", "0.9.3", "0.9.4", "0.9.5", "0.9.6", "0.9.7", "0.9.8", "0.9.9", "0.9.10", "0.9.11", "0.9.12", "0.9.13", "0.9.14", "0.9.15", "0.9.16", "0.9.17", "0.9.18", "0.9.19", "0.9.20", "0.9.21", "0.9.22", "0.9.23", "0.9.24", "0.9.25", "0.9.26", "0.9.27", "0.9.28", "0.9.29"]);
+      const supportedVersions = new Set(["0.3.0", "0.4.0", "0.5.0", "0.6.0", "0.6.1", "0.7.0", "0.7.2", "0.7.3", "0.7.4", "0.7.5", "0.7.6", "0.7.7", "0.7.9", "0.8.0", "0.8.1", "0.8.2", "0.8.3", "0.8.4", "0.8.5", "0.8.6", "0.8.7", "0.8.8", "0.8.9", "0.8.10", "0.8.11", "0.8.12", "0.8.13", "0.9.0", "0.9.1", "0.9.2", "0.9.3", "0.9.4", "0.9.5", "0.9.6", "0.9.7", "0.9.8", "0.9.9", "0.9.10", "0.9.11", "0.9.12", "0.9.13", "0.9.14", "0.9.15", "0.9.16", "0.9.17", "0.9.18", "0.9.19", "0.9.20", "0.9.21", "0.9.22", "0.9.23", "0.9.24", "0.9.25", "0.9.26", "0.9.27", "0.9.28", "0.9.29", "0.9.30"]);
       if (!supportedVersions.has(importData.version)) {
         return {
           success: false,
@@ -388,6 +391,11 @@ export function registerExportImportFunction(sdk: IIIClient, kv: StateKV): void 
           success: false,
           error: `Too many total observations (max ${MAX_TOTAL_OBSERVATIONS})`,
         };
+      }
+      try {
+        validateGraphRecords(importData.graphNodes ?? [], importData.graphEdges ?? []);
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : String(error) };
       }
 
       const stats = {
@@ -494,18 +502,6 @@ export function registerExportImportFunction(sdk: IIIClient, kv: StateKV): void 
             await kv.list<Insight>(KV.insights).catch(() => []),
             (i) => kv.delete(KV.insights, i.id),
           );
-          await withKeyedLock("graph:persist", async () =>
-            runChunked(
-              await kv.list<{ id: string }>(KV.graphNodes).catch(() => []),
-              (n) => kv.delete(KV.graphNodes, n.id),
-            ),
-          );
-          await withKeyedLock("graph:persist", async () =>
-            runChunked(
-              await kv.list<{ id: string }>(KV.graphEdges).catch(() => []),
-              (e) => kv.delete(KV.graphEdges, e.id),
-            ),
-          );
           await runChunked(
             await kv.list<{ id: string }>(KV.semantic).catch(() => []),
             (s) => kv.delete(KV.semantic, s.id),
@@ -597,27 +593,12 @@ export function registerExportImportFunction(sdk: IIIClient, kv: StateKV): void 
         stats.summaries++;
       });
 
-      if (importData.graphNodes) {
-        await withKeyedLock("graph:persist", () =>
-          runChunked(importData.graphNodes!, async (node) => {
-            if (strategy === "skip") {
-              const existing = await kv.get(KV.graphNodes, node.id).catch(() => null);
-              if (existing) { stats.skipped++; return; }
-            }
-            await kv.set(KV.graphNodes, node.id, boundRecordSources(node));
-          }),
-        );
-      }
-      if (importData.graphEdges) {
-        await withKeyedLock("graph:persist", () =>
-          runChunked(importData.graphEdges!, async (edge) => {
-            if (strategy === "skip") {
-              const existing = await kv.get(KV.graphEdges, edge.id).catch(() => null);
-              if (existing) { stats.skipped++; return; }
-            }
-            await kv.set(KV.graphEdges, edge.id, boundRecordSources(edge));
-          }),
-        );
+      if (strategy === "replace" || importData.graphNodes || importData.graphEdges) {
+        const graph = await persistGraphRecords(kv, importData.graphNodes ?? [], importData.graphEdges ?? [], {
+          mode: strategy === "skip" ? "skip" : "merge",
+          replace: strategy === "replace",
+        });
+        stats.skipped += graph.nodesSkipped + graph.edgesSkipped;
       }
       if (importData.semanticMemories) {
         await runChunked(importData.semanticMemories, async (sem) => {

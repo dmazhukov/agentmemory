@@ -54,6 +54,7 @@ export interface StatusInputs {
     cpuPercent?: number;
   } | null;
   circuitBreaker: { state?: string; failures?: number } | null;
+  llmRoute?: string | null;
   functionMetrics: FunctionMetricInput[];
   provider: string;
   embeddingProvider: string;
@@ -107,6 +108,7 @@ export interface StatusReport {
   health: StatusInputs["health"];
   provider: {
     llm: string;
+    route: string | null;
     embeddings: string;
     circuitBreaker: StatusInputs["circuitBreaker"];
     offWithoutLlm: string[];
@@ -491,6 +493,7 @@ export function evaluateStatus(input: StatusInputs): StatusReport {
     health: input.health,
     provider: {
       llm: input.provider,
+      route: input.provider === "noop" ? null : (input.llmRoute ?? null),
       embeddings: input.embeddingProvider,
       circuitBreaker: input.circuitBreaker,
       offWithoutLlm: noLlm ? OFF_WITHOUT_LLM : [],
@@ -525,11 +528,17 @@ function captureProblems(capture: CaptureStatus | null, now: Date, restPort: num
   const base = captureRestBase(restPort);
   const inbox = capture.inbox;
   if (inbox && inbox.dead > 0) {
+    // Errors returned by mem::observe dead-letter on the first attempt, so the
+    // message cannot claim the retry budget was used.
+    const sessionCap = inbox.lastError?.startsWith("Session observation limit reached") ?? false;
+    const listAndRetry = `List them with curl -s ${CURL_AUTH_HEADER} '${base}/capture?status=dead'. After fixing the cause, retry them with curl -X POST ${base}/capture/retry ${CURL_AUTH_HEADER} -H "Content-Type: application/json" -d '{"all":true}'.`;
     problems.push({
       level: "warn",
       code: "capture-dead-letters",
-      message: `${plural(inbox.dead, "captured observation")} could not be stored after ${plural(capture.policy.maxAttempts, "attempt")} and ${inbox.dead === 1 ? "is parked as a dead letter" : "are parked as dead letters"}${inbox.lastError ? `: ${inbox.lastError}` : "."}`,
-      fix: `List them with curl -s ${CURL_AUTH_HEADER} '${base}/capture?status=dead'. After fixing the cause, retry them with curl -X POST ${base}/capture/retry ${CURL_AUTH_HEADER} -H "Content-Type: application/json" -d '{"all":true}'.`,
+      message: `${plural(inbox.dead, "captured observation")} could not be stored and ${inbox.dead === 1 ? "is parked as a dead letter" : "are parked as dead letters"}${inbox.lastError ? `: ${inbox.lastError}` : "."}`,
+      fix: sessionCap
+        ? `The session reached its MAX_OBS_PER_SESSION cap, so a retry is refused again until the cap is raised. Raise MAX_OBS_PER_SESSION in ~/.agentmemory/.env (0 = no cap) and restart agentmemory. ${listAndRetry}`
+        : listAndRetry,
     });
   }
   if (inbox && inbox.retrying + inbox.pending > 0) {
@@ -829,7 +838,7 @@ ${row("Streams port", escapeHtml(ports.streams ?? "unknown"))}
 ${row("Viewer port", escapeHtml(ports.viewer ?? "not running"))}
 </table>
 <h2>LLM and embeddings</h2><table>
-${row("LLM", escapeHtml(report.provider.llm === "noop" ? "none configured" : report.provider.llm))}
+${row("LLM", escapeHtml(report.provider.llm === "noop" ? "none configured" : (report.provider.route ?? report.provider.llm)))}
 ${report.provider.offWithoutLlm.length ? row("Off without an LLM", escapeHtml(report.provider.offWithoutLlm.join(", ")) + `<p class="note">${escapeHtml(LLM_KEY_FIX)}</p>`) : ""}
 ${row("Embeddings", escapeHtml(report.provider.embeddings === "none" ? "none (keyword search only)" : report.provider.embeddings))}
 ${row("Circuit breaker", escapeHtml(report.provider.circuitBreaker ? `${report.provider.circuitBreaker.state ?? "unknown"} (${report.provider.circuitBreaker.failures ?? 0} failures)` : "not in use"))}

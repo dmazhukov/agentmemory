@@ -1,3 +1,4 @@
+import { isLegacyGraphState, pinGraphState, resetGraphGeneration } from "../state/graph-generation.js";
 import type { IIIClient } from "iii-sdk";
 import type {
   GraphNode,
@@ -182,11 +183,12 @@ function paginateFromSnapshot(
     depth: 0,
     totalNodes: total,
     totalEdges: snap.stats.totalEdges,
-    truncated: total > pageNodes.length,
+    truncated: total > pageNodes.length || snap.sampleIncomplete === true,
     limit,
     offset,
     fromSnapshot: true,
     degrees,
+    ...(snap.sampleIncomplete ? { warning: "Graph counts are current; the bounded snapshot sample may omit nodes or edges after replacements. Use a graph search for specific entities." } : {}),
   };
 }
 
@@ -552,10 +554,12 @@ export async function persistGraphDelta(
   rawNodes: GraphNode[],
   rawEdges: GraphEdge[],
 ): Promise<{ newNodeCount: number; newEdgeCount: number }> {
+  kv = await pinGraphState(kv);
   const nodes = rawNodes.map((node) => scrubRecord(node));
   const edges = rawEdges.map((edge) => scrubRecord(edge));
   return withKeyedLock("graph:persist", async () => {
     const snap = (await readSnapshotStrict(kv)) ?? emptySnapshot();
+    const legacyResetAt = await isLegacyGraphState(kv) ? snap.resetAt : undefined;
     const capturedAt = new Date().toISOString();
     let newNodeCount = 0;
     let newEdgeCount = 0;
@@ -578,9 +582,9 @@ export async function persistGraphDelta(
         existing = await kv.get<GraphNode>(KV.graphNodes, existingId);
         if (
           existing &&
-          snap.resetAt &&
+          legacyResetAt &&
           typeof existing.createdAt === "string" &&
-          existing.createdAt < snap.resetAt
+          existing.createdAt < legacyResetAt
         ) {
           existing = null;
         }
@@ -629,9 +633,9 @@ export async function persistGraphDelta(
         existing = await kv.get<GraphEdge>(KV.graphEdges, existingId);
         if (
           existing &&
-          snap.resetAt &&
+          legacyResetAt &&
           typeof existing.createdAt === "string" &&
-          existing.createdAt < snap.resetAt
+          existing.createdAt < legacyResetAt
         ) {
           existing = null;
         }
@@ -705,6 +709,7 @@ export async function compactGraphProvenance(
   kv: StateKV,
   opts: GraphCompactOptions = {},
 ): Promise<GraphCompactResult> {
+  kv = await pinGraphState(kv);
   const { scope } = opts;
   if (scope !== undefined && !COMPACT_SCOPES.includes(scope)) {
     throw new Error(`unknown compact scope: ${String(scope)}`);
@@ -807,11 +812,13 @@ export async function compactGraphProvenance(
 
 export function registerGraphFunction(
   sdk: IIIClient,
-  kv: StateKV,
+  state: StateKV,
   provider: MemoryProvider,
 ): void {
+  const kv = state;
   sdk.registerFunction("mem::graph-extract",
     async (data: { observations: CompressedObservation[] }) => {
+      const kv = await pinGraphState(state);
       if (!data.observations || data.observations.length === 0) {
         return { success: false, error: "No observations provided" };
       }
@@ -904,6 +911,7 @@ export function registerGraphFunction(
       limit?: number;
       offset?: number;
     }): Promise<GraphQueryResult> => {
+      const kv = await pinGraphState(state);
       const maxDepth = Math.min(data.maxDepth || 3, 5);
       const { limit, offset } = resolvePagination(data.limit, data.offset);
 
@@ -1038,6 +1046,7 @@ export function registerGraphFunction(
   );
 
   sdk.registerFunction("mem::graph-stats", async () => {
+    const kv = await pinGraphState(state);
     const snap = await readSnapshot(kv);
     if (snap) {
       return {
@@ -1069,6 +1078,7 @@ export function registerGraphFunction(
   sdk.registerFunction(
     "mem::graph-snapshot-rebuild",
     async (data?: { force?: boolean }) => {
+      const kv = await pinGraphState(state);
       const started = Date.now();
       const forceRebuild = data?.force === true;
       try {
@@ -1190,6 +1200,7 @@ export function registerGraphFunction(
   });
 
   sdk.registerFunction("mem::graph-compact", async (data?: GraphCompactOptions) => {
+    const kv = await pinGraphState(state);
     const started = Date.now();
     try {
       const result = await compactGraphProvenance(kv, data ?? {});
@@ -1217,24 +1228,28 @@ export function registerGraphFunction(
 
   sdk.registerFunction("mem::graph-reset", async () => {
     const started = Date.now();
-    // Stamp resetAt=now on the empty snapshot. Future
-    // mem::graph-extract calls compare each name-index lookup's
-    // existing node `createdAt` against this timestamp; anything
-    // older counts as an orphan and is dropped from the merge path,
-    // forcing extract to write a fresh row instead of reconnecting
-    // to a pre-reset entry.
+    // Publish a fresh namespace without enumerating or deleting the old graph.
     const resetSnapshot: GraphSnapshot = {
       ...emptySnapshot(),
       resetAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      dirty: false,
     };
     await withKeyedLock("graph:persist", () =>
-      kv.set(KV.graphSnapshot, SNAPSHOT_KEY, resetSnapshot),
+      resetGraphGeneration(kv, resetSnapshot),
     );
     const counts: Record<string, number> = {
       [KV.graphSnapshot]: 1,
     };
     const tookMs = Date.now() - started;
     logger.info("Graph state reset", { counts, tookMs });
-    return { success: true, cleared: counts, tookMs };
+    return {
+      success: true,
+      cleared: counts,
+      resetMode: "generation",
+      physicalStorageRetained: true,
+      message: "The active graph is empty. Previous graph storage is retained; this operation does not reclaim disk space.",
+      tookMs,
+    };
   });
 }

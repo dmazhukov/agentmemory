@@ -16,11 +16,13 @@ export const KV = {
   profiles: "mem:profiles",
   claudeBridge: "mem:claude-bridge",
   graphNodes: "mem:graph:nodes",
+  graphControl: "mem:graph:control",
   graphEdges: "mem:graph:edges",
   graphSnapshot: "mem:graph:snapshot",
   graphNameIndex: "mem:graph:name-index",
   graphEdgeKey: "mem:graph:edge-key",
   graphNodeDegree: "mem:graph:node-degree",
+  graphMembership: "mem:graph:membership",
   semantic: "mem:semantic",
   procedural: "mem:procedural",
   teamShared: (teamId: string) => `mem:team:${teamId}:shared`,
@@ -60,6 +62,7 @@ export const KV = {
   obsSessionIndex: (shard: number) => `mem:idx:obs:${shard}`,
   captureInbox: "mem:capture:inbox",
   captureEvents: (shard: string) => `mem:capture:events:${shard}`,
+  capturePrompts: "mem:capture:prompts",
 } as const;
 
 export const STREAM = {

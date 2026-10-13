@@ -20,6 +20,7 @@ import {
   isSessionSweepEnabled,
   isGraphCompactOnBootEnabled,
   getSessionSweepStaleHours,
+  getFinalizeIdleMs,
 } from "./config.js";
 import {
   createProvider,
@@ -29,9 +30,10 @@ import {
 } from "./providers/index.js";
 import { StateKV } from "./state/kv.js";
 import { VectorIndex } from "./state/vector-index.js";
+import type { SearchLayer } from "./state/search-layer.js";
 import { HybridSearch } from "./state/hybrid-search.js";
 import { IndexPersistence } from "./state/index-persistence.js";
-import { SHUTDOWN_FLUSH_TIMEOUT_MS, SHUTDOWN_HARD_EXIT_MS, settleWithin } from "./shutdown.js";
+import { SHUTDOWN_FLUSH_TIMEOUT_MS, SHUTDOWN_HARD_EXIT_MS, runStartupCleanup, settleWithin } from "./shutdown.js";
 import { registerPrivacyFunction, withWriteScrubbing } from "./functions/privacy.js";
 import { registerObserveFunction } from "./functions/observe.js";
 import { registerCaptureFunctions } from "./functions/capture.js";
@@ -71,6 +73,7 @@ import { registerTimelineFunction } from "./functions/timeline.js";
 import { registerSmartSearchFunction } from "./functions/smart-search.js";
 import { registerRecentSearchesSweepFunction } from "./functions/recent-searches-sweep.js";
 import { registerSessionSweepFunction } from "./functions/session-sweep.js";
+import { FINALIZE_TICK_MS, registerSessionFinalizeFunction } from "./functions/session-finalize.js";
 import { registerProfileFunction } from "./functions/profile.js";
 import { registerAutoForgetFunction } from "./functions/auto-forget.js";
 import { registerExportImportFunction } from "./functions/export-import.js";
@@ -299,6 +302,7 @@ async function main() {
   registerRememberFunction(sdk, kv);
   registerEvictFunction(sdk, kv);
   registerSessionSweepFunction(sdk, kv);
+  registerSessionFinalizeFunction(sdk, kv);
 
   registerRelationsFunction(sdk, kv);
   registerTimelineFunction(sdk, kv);
@@ -429,8 +433,8 @@ async function main() {
     graphWeight,
   );
 
-  const hybridRanker = (query: string, limit: number) =>
-    hybridSearch.search(query, limit);
+  const hybridRanker = (query: string, limit: number, targetLayer?: SearchLayer) =>
+    hybridSearch.search(query, limit, targetLayer);
   registerSmartSearchFunction(sdk, kv, hybridRanker);
   setHybridRanker(hybridRanker);
   registerRecentSearchesSweepFunction(sdk, kv);
@@ -720,6 +724,19 @@ async function main() {
     bootLog(`Session sweep: enabled (hourly, stale after ${getSessionSweepStaleHours()}h)`);
   }
 
+  const finalizeIdleMs = getFinalizeIdleMs();
+  if (finalizeIdleMs > 0) {
+    const sessionFinalizeTimer = setInterval(async () => {
+      try {
+        await sdk.trigger({ function_id: "mem::session-finalize", payload: {} });
+      } catch (err) {
+        bootLog(`Session finalize failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }, FINALIZE_TICK_MS);
+    sessionFinalizeTimer.unref();
+    bootLog(`Session finalize: idle sessions complete after ${Math.round(finalizeIdleMs / 1000)}s`);
+  }
+
   if (isConsolidationEnabled()) {
     const consolidationTimer = setInterval(async () => {
       try {
@@ -732,12 +749,12 @@ async function main() {
 
   const shutdown = async () => {
     console.log(`\n[agentmemory] Shutting down...`);
-    const hardExit = setTimeout(() => {
+    const hardExit = setTimeout(async () => {
       console.warn(
         `[agentmemory] Shutdown still blocked after ${SHUTDOWN_HARD_EXIT_MS}ms; exiting now.`,
       );
       clearWorkerPidfile();
-      process.exit(1);
+      process.exit(await runStartupCleanup(1).catch(() => 1));
     }, SHUTDOWN_HARD_EXIT_MS);
     hardExit.unref();
     healthMonitor.stop();
@@ -762,13 +779,13 @@ async function main() {
       console.warn(`[agentmemory] SDK shutdown failed:`, err);
     });
     clearWorkerPidfile();
-    process.exit(0);
+    process.exit(await runStartupCleanup(0).catch(() => 1));
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
   console.error(`[agentmemory] Fatal:`, err);
-  process.exit(1);
+  process.exit(await runStartupCleanup(1).catch(() => 1));
 });

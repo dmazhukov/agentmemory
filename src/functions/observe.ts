@@ -13,6 +13,7 @@ import { withKeyedLock } from "../state/keyed-mutex.js";
 import { isAutoCompressEnabled } from "../config.js";
 import { buildSyntheticCompression } from "./compress-synthetic.js";
 import { isCaptureKey } from "../capture/event-record.js";
+import { claimBackfillPrompt, isBackfillPrompt, recordLivePrompt } from "../capture/prompt-ledger.js";
 import { getSearchIndex, getVectorIndex, scheduleIndexSave, vectorIndexAddGuarded } from "./search.js";
 import { getAgentId } from "../config.js";
 import { logger } from "../logger.js";
@@ -175,13 +176,23 @@ export function registerObserveFunction(
       }
 
       const pendingImageData = extractedImage;
+      const submittedPrompt =
+        payload.hookType === "prompt_submit" && typeof raw.userPrompt === "string" ? raw.userPrompt : undefined;
+      const backfillPrompt = submittedPrompt && isBackfillPrompt(payload.data) ? submittedPrompt : undefined;
+      const livePrompt = submittedPrompt && !backfillPrompt ? submittedPrompt : undefined;
+      const promptRef = durable || typeof payload.eventId !== "string" ? obsId : payload.eventId;
 
       return withKeyedLock(`obs:${payload.sessionId}`, async () => {
         const existing = await kv.list<CompressedObservation>(KV.observations(payload.sessionId));
         const stored = durable ? existing.find((o) => o?.id === obsId) : undefined;
         if (stored) {
+          if (livePrompt) await recordLivePrompt(kv, payload.sessionId, livePrompt, promptRef);
           await restoreIndexEntries(stored);
           return { observationId: obsId, deduplicated: true, existing: true };
+        }
+        if (backfillPrompt && (await claimBackfillPrompt(kv, payload.sessionId, backfillPrompt, promptRef))) {
+          recordDedupSkip();
+          return { deduplicated: true, sessionId: payload.sessionId };
         }
         if (maxObservationsPerSession && maxObservationsPerSession > 0) {
           if (existing.length >= maxObservationsPerSession) {
@@ -269,6 +280,7 @@ export function registerObserveFunction(
         if (dedupMap && dedupHash) {
           dedupMap.record(dedupHash);
         }
+        if (livePrompt) await recordLivePrompt(kv, payload.sessionId, livePrompt, promptRef);
 
         await sdk.trigger({
           function_id: "stream::send",
@@ -292,7 +304,7 @@ export function registerObserveFunction(
               value: (session.observationCount || 0) + 1,
             },
           ];
-          if (session.status === "abandoned") {
+          if (session.status !== "active") {
             updates.push({ type: "set", path: "status", value: "active" });
             updates.push({ type: "remove", path: "endedAt" });
           }

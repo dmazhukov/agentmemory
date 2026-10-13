@@ -216,6 +216,118 @@ describe("renderEngineConfig", () => {
   });
 });
 
+describe("renderEngineConfig bind hosts", () => {
+  const ports = { restPort: 3111, streamPort: 3112, viewerPort: 3113, enginePort: 49134 };
+  const hostsOf = (text: string) =>
+    [...text.matchAll(/^\s*host:\s*(\S+)\s*$/gm)].map((m) => m[1]);
+
+  it("keeps the bundled config on loopback", () => {
+    const source = readFileSync(join(import.meta.dirname, "..", "iii-config.yaml"), "utf8");
+    const hosts = hostsOf(renderEngineConfig(source, { dataDir: "/tmp/am", ports }));
+    expect(hosts.length).toBeGreaterThan(0);
+    expect(new Set(hosts)).toEqual(new Set(["127.0.0.1"]));
+  });
+
+  it("keeps the 0.0.0.0 binds of a config chosen through AGENTMEMORY_III_CONFIG", () => {
+    const source = readFileSync(
+      join(import.meta.dirname, "..", "iii-config.docker.yaml"),
+      "utf8",
+    );
+    const rendered = renderEngineConfig(source, { dataDir: "/tmp/am", ports });
+    expect(hostsOf(rendered)).toEqual(["0.0.0.0", "0.0.0.0", "0.0.0.0"]);
+    expect(rendered).toContain("port: 3111");
+    expect(rendered).toContain("port: 3112");
+    expect(rendered).toContain("port: 49134");
+  });
+});
+
+describe("renderEngineConfig CORS origins", () => {
+  const ports = { restPort: 3211, streamPort: 3212, viewerPort: 3213, enginePort: 49234 };
+  const managedOrigins =
+    '        allowed_origins: ["http://localhost:3211", "http://localhost:3213", "http://127.0.0.1:3211", "http://127.0.0.1:3213"]';
+  const httpWorker = (corsLines: string[]) =>
+    [
+      "workers:",
+      "  - name: iii-worker-manager",
+      "    config:",
+      "      port: 49234",
+      "      host: 127.0.0.1",
+      "  - name: iii-http",
+      "    config:",
+      "      port: 3211",
+      "      cors:",
+      ...corsLines,
+      "        allowed_methods: [GET, POST, PUT, DELETE, OPTIONS]",
+      "  - name: iii-state",
+      "    config: {}",
+    ].join("\n");
+
+  it.each([
+    {
+      shape: "an indented block list",
+      origins: [
+        "        allowed_origins:",
+        '          - "http://localhost:3111"',
+        '          - "http://localhost:3113"',
+      ],
+    },
+    {
+      shape: "a compact block list",
+      origins: [
+        "        allowed_origins:",
+        '        - "http://localhost:3111"',
+        '        - "http://localhost:3113"',
+      ],
+    },
+    {
+      shape: "a commented block list",
+      origins: [
+        "        allowed_origins: # local only",
+        '          - "http://localhost:3111"',
+        "",
+        "          # viewer",
+        '          - "http://localhost:3113"',
+      ],
+    },
+    {
+      shape: "a one-line flow list",
+      origins: ['        allowed_origins: ["http://localhost:3111", "http://localhost:3113"]'],
+    },
+    {
+      shape: "a multi-line flow list",
+      origins: [
+        "        allowed_origins: [",
+        '            "http://localhost:3111",',
+        '            "http://localhost:3113",',
+        "        ]",
+      ],
+    },
+    {
+      shape: "a scalar",
+      origins: ['        allowed_origins: "*"'],
+    },
+  ])("replaces $shape with the managed origins", ({ origins }) => {
+    const rendered = renderEngineConfig(httpWorker(origins), { dataDir: "/tmp/am", ports });
+
+    expect(rendered).toBe(httpWorker([managedOrigins]));
+  });
+
+  it("keeps the comment that introduces the next key", () => {
+    const source = httpWorker([
+      "        allowed_origins:",
+      '          - "http://localhost:3111"',
+      "",
+      "        # the viewer needs OPTIONS",
+    ]);
+
+    const rendered = renderEngineConfig(source, { dataDir: "/tmp/am", ports });
+
+    expect(rendered).toBe(
+      httpWorker([managedOrigins, "", "        # the viewer needs OPTIONS"]),
+    );
+  });
+});
+
 describe("clearPersistedBuiltinConfig", () => {
   const configPath = join("/srv", "state", "iii-config.runtime.yaml");
 

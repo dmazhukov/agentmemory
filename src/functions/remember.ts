@@ -75,6 +75,11 @@ export function registerRememberFunction(sdk: IIIClient, kv: StateKV): void {
           ? data.project.trim()
           : undefined;
 
+      const callAgentId =
+        typeof data.agentId === "string" && data.agentId.trim().length > 0
+          ? data.agentId.trim().slice(0, 128)
+          : getAgentId();
+
       const { memory, supersededId, nearMatch } = await withKeyedLock("mem:remember", async () => {
         // Candidate generation: query the BM25 index with the new content
         // and Jaccard-compare only the top hits, instead of walking the
@@ -122,6 +127,7 @@ export function registerRememberFunction(sdk: IIIClient, kv: StateKV): void {
         const lowerContent = data.content.toLowerCase();
         for (const existing of candidateMemories) {
           if (existing.isLatest === false) continue;
+          if ((existing.agentId || undefined) !== callAgentId) continue;
           // Never supersede a memory that belongs to a different project.
           // Both sides must have an explicit project for the guard to engage;
           // an unscoped memory (legacy, no project field) is treated as a
@@ -146,15 +152,6 @@ export function registerRememberFunction(sdk: IIIClient, kv: StateKV): void {
             nearMatch = { id: existing.id, title: existing.title, similarity };
           }
         }
-
-        // stamp the agent role on the memory so future recall can
-        // filter by agent. Request body wins (multi-agent runtimes
-        // explicitly tagging at write time), env AGENT_ID fallback,
-        // none → memory is unscoped (legacy behavior).
-        const callAgentId =
-          typeof data.agentId === "string" && data.agentId.trim().length > 0
-            ? data.agentId.trim().slice(0, 128)
-            : getAgentId();
 
         const memory: Memory = {
           id: generateId("mem"),
@@ -198,7 +195,7 @@ export function registerRememberFunction(sdk: IIIClient, kv: StateKV): void {
         await kv.set(KV.memories, memory.id, memory);
 
         try {
-          getSearchIndex().add(memoryToObservation(memory));
+          getSearchIndex().add(memoryToObservation(memory), "memory");
           scheduleIndexSave();
         } catch (err) {
           logger.warn("Failed to index saved memory into BM25", {
@@ -214,10 +211,10 @@ export function registerRememberFunction(sdk: IIIClient, kv: StateKV): void {
         memory.sessionIds?.[0] ?? "memory",
         memory.title + " " + memory.content,
         { kind: "memory", logId: memory.id },
-        (embedding) =>
+        (embedding, isCurrent) =>
           withKeyedLock("mem:remember", async () => {
             const current = await kv.get<Memory>(KV.memories, memory.id);
-            if (!current || current.isLatest === false) return false;
+            if (!isCurrent() || !current || current.isLatest === false) return false;
             getVectorIndex()?.add(
               memory.id,
               memory.sessionIds?.[0] ?? "memory",
