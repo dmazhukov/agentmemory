@@ -1122,7 +1122,7 @@ Three tool surfaces, smallest to largest: `AGENTMEMORY_TOOLS=core` trims visibil
 | `memory_vision_search` | Search image observations |
 | `memory_timeline` | Chronological observations |
 | `memory_profile` | Project profile (concepts, files, patterns) |
-| `memory_export` | Export all memory data |
+| `memory_export` | Export memory data, in pages or selected collections on a large store |
 | `memory_relations` | Query relationship graph |
 | `memory_commit_lookup` | Sessions behind a git commit |
 | `memory_commits` | Commits recorded for a session |

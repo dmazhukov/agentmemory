@@ -236,7 +236,7 @@ export const CORE_TOOLS: McpToolDef[] = [
         collectionLimit: {
           type: "number",
           description:
-            "Rows per page for memories, summaries, graphNodes, lessons and the other top-level collections; access logs follow the memories on the page",
+            "Rows per page for memories, summaries, graphNodes, lessons and the other top-level collections; access logs follow the memories on the page. Sessions and their observations are paged only by maxSessions and offset, so pass collections to leave them out of each page",
         },
         collectionOffset: {
           type: "number",
@@ -245,7 +245,7 @@ export const CORE_TOOLS: McpToolDef[] = [
         collections: {
           type: "string",
           description:
-            "Comma-separated collections to return, e.g. memories,lessons. Sessions and their observations come back only when the list names sessions. Unknown names are ignored. Omit for everything. A paged or selected export cannot be imported with strategy replace.",
+            "Comma-separated collections to return, e.g. memories,lessons. Sessions and their observations come back only when the list names sessions, access logs only together with memories. Unknown names are ignored. Omit for everything. A paged or selected export cannot be imported with strategy replace.",
         },
       },
     },
