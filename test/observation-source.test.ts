@@ -153,7 +153,7 @@ describe("retained observation source", () => {
     vi.stubEnv("AGENTMEMORY_AUTO_COMPRESS", "true");
     const provider: MemoryProvider = {
       name: "test", summarize: vi.fn(),
-      compress: vi.fn(async () => "<type>file_read</type><title>Read configuration</title><facts><fact>Port configured</fact></facts><narrative>Read the configuration file.</narrative><concepts><concept>config</concept></concepts><files></files><importance>5</importance>"),
+      compress: vi.fn(async () => "<observation><type>file_read</type><title>Read configuration</title><facts><fact>Port configured</fact></facts><narrative>Read the configuration file.</narrative><concepts><concept>config</concept></concepts><files></files><importance>5</importance></observation>"),
     };
     registerCompressFunction(r.sdk as never, r.kv as never, provider);
     const tail = "MODEL_SOURCE_ONLY_TAIL";

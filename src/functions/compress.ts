@@ -4,7 +4,6 @@ import { isManagedImagePath } from "../utils/image-store.js";
 import type {
   RawObservation,
   CompressedObservation,
-  ObservationType,
   MemoryProvider,
 } from "../types.js";
 import { KV, STREAM } from "../state/schema.js";
@@ -14,7 +13,7 @@ import {
   buildCompressionPrompt,
 } from "../prompts/compression.js";
 import { VISION_DESCRIPTION_PROMPT } from "../prompts/vision.js";
-import { getXmlTag, getXmlChildren } from "../prompts/xml.js";
+import { parseCompressionXml } from "../prompts/compression-output.js";
 import { getSearchIndex, scheduleIndexSave, vectorIndexAddGuarded } from "./search.js";
 import { CompressOutputSchema } from "../eval/schemas.js";
 import { validateOutput } from "../eval/validator.js";
@@ -26,47 +25,6 @@ import { createObservationSource, withoutObservationSource } from "./observation
 import { budgetLiveObservationSource } from "./observation-source-budget.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { scrubRecord, stripPrivateData } from "./privacy.js";
-
-const VALID_TYPES = new Set<string>([
-  "file_read",
-  "file_write",
-  "file_edit",
-  "command_run",
-  "search",
-  "web_fetch",
-  "conversation",
-  "error",
-  "decision",
-  "discovery",
-  "subagent",
-  "notification",
-  "task",
-  "image",
-  "other",
-]);
-
-function parseCompressionXml(
-  xml: string,
-): Omit<CompressedObservation, "id" | "sessionId" | "timestamp"> | null {
-  const rawType = getXmlTag(xml, "type");
-  const title = getXmlTag(xml, "title");
-  if (!rawType || !title) return null;
-  const type = VALID_TYPES.has(rawType) ? rawType : "other";
-
-  return {
-    type: type as ObservationType,
-    title,
-    subtitle: getXmlTag(xml, "subtitle") || undefined,
-    facts: getXmlChildren(xml, "facts", "fact"),
-    narrative: getXmlTag(xml, "narrative"),
-    concepts: getXmlChildren(xml, "concepts", "concept"),
-    files: getXmlChildren(xml, "files", "file"),
-    importance: Math.max(
-      1,
-      Math.min(10, parseInt(getXmlTag(xml, "importance") || "5", 10) || 5),
-    ),
-  };
-}
 
 export function registerCompressFunction(
   sdk: IIIClient,
@@ -129,18 +87,18 @@ export function registerCompressFunction(
       try {
         const validator = (response: string) => {
           const parsed = parseCompressionXml(response);
-          if (!parsed) return { valid: false, errors: ["xml_parse_failed"] };
+          if (!parsed) return { valid: false as const, errors: ["xml_parse_failed"] };
           const result = validateOutput(
             CompressOutputSchema,
-            parsed,
+            scrubRecord(parsed),
             "mem::compress",
           );
           return result.valid
-            ? { valid: true }
-            : { valid: false, errors: result.result.errors };
+            ? result
+            : { valid: false as const, errors: result.result.errors };
         };
 
-        const { response, retried } = await compressWithRetry(
+        const result = await compressWithRetry(
           provider,
           COMPRESSION_SYSTEM,
           prompt,
@@ -148,19 +106,22 @@ export function registerCompressFunction(
           1,
         );
 
-        const parsed = parseCompressionXml(response);
-        if (!parsed) {
+        if (!result.valid) {
           const latencyMs = Date.now() - startMs;
           if (metricsStore) {
             await metricsStore.record("mem::compress", latencyMs, false);
           }
-          logger.warn("Failed to parse compression XML", {
+          logger.warn("Compression output rejected after validation", {
             obsId: data.observationId,
-            retried,
+            retried: result.retried,
           });
-          return { success: false, error: "parse_failed" };
+          return {
+            success: false,
+            error: result.errors?.includes("xml_parse_failed") ? "parse_failed" : "validation_failed",
+          };
         }
 
+        const parsed = result.data;
         const qualityScore = scoreCompression(parsed);
 
         const candidate: CompressedObservation = {
@@ -168,7 +129,7 @@ export function registerCompressFunction(
           sessionId: data.sessionId,
           timestamp: data.raw.timestamp,
           compressedAt: new Date().toISOString(),
-          ...scrubRecord(parsed),
+          ...parsed,
           confidence: qualityScore / 100,
           source: createObservationSource(data.raw),
           ...(hasImage ? { modality: data.raw.modality } : {}),
@@ -250,7 +211,7 @@ export function registerCompressFunction(
           type: compressed.type,
           importance: compressed.importance,
           qualityScore,
-          retried,
+          retried: result.retried,
         });
 
         return { success: true, compressed: withoutObservationSource(compressed), qualityScore };

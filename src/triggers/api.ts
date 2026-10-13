@@ -6,8 +6,10 @@ import type { Session, CompressedObservation, HookPayload, CommitLink, SessionSu
 import { AUDIT_MIGRATION_STATE_KEY } from "../functions/audit.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { KV } from "../state/schema.js";
+import { isSearchLayer, type SearchLayer } from "../state/search-layer.js";
 import { checkPayloadFrameSize } from "../state/frame-guard.js";
 import { StateKV } from "../state/kv.js";
+import { pinGraphState } from "../state/graph-generation.js";
 import { addSessionToProjectIndex } from "../state/session-index.js";
 import { getLatestHealth } from "../health/monitor.js";
 import type { MetricsStore } from "../eval/metrics-store.js";
@@ -62,6 +64,7 @@ import {
   isAutoCompressEnabled,
   isContextInjectionEnabled,
   detectEmbeddingProvider,
+  describeLlmRoute,
   detectLlmProviderKind,
   getAgentId,
   isAgentScopeIsolated,
@@ -427,6 +430,7 @@ export function createStatusReporter(sdk: IIIClient, kv: StateKV, deps: StatusRe
           }
         : null,
       circuitBreaker: circuit,
+      llmRoute: describeLlmRoute(config.provider),
       functionMetrics: functionMetrics ?? [],
       provider: detectLlmProviderKind(),
       embeddingProvider: describeEmbeddingProvider(),
@@ -847,10 +851,14 @@ export function registerApiTriggers(
         cwd?: string;
         format?: string;
         token_budget?: number;
+        targetLayer?: SearchLayer;
         agentId?: string;
       }>,
     ): Promise<Response> => {
       const body = (req.body ?? {}) as Record<string, unknown>;
+      if (body.targetLayer !== undefined && !isSearchLayer(body.targetLayer)) {
+        return { status_code: 400, body: { error: "targetLayer must be one of: all, memory, observation" } };
+      }
       const queryAgentId =
         typeof (req as { query_params?: Record<string, string> })
           .query_params?.["agentId"] === "string"
@@ -866,11 +874,10 @@ export function registerApiTriggers(
       ) {
         return { status_code: 400, body: { error: "limit must be a positive integer" } };
       }
-      if (body.project !== undefined && typeof body.project !== "string") {
-        return { status_code: 400, body: { error: "project must be a string" } };
-      }
-      if (body.cwd !== undefined && typeof body.cwd !== "string") {
-        return { status_code: 400, body: { error: "cwd must be a string" } };
+      for (const field of ["project", "cwd", "agentId"] as const) {
+        if (body[field] !== undefined && typeof body[field] !== "string") {
+          return { status_code: 400, body: { error: `${field} must be a string` } };
+        }
       }
       if (
         body.format !== undefined &&
@@ -906,6 +913,7 @@ export function registerApiTriggers(
             : undefined,
         token_budget: body.token_budget as number | undefined,
         agentId: bodyAgentId ?? queryAgentId,
+        targetLayer: body.targetLayer ?? "all",
       };
       const result = await sdk.trigger({ function_id: "mem::search", payload: payload });
       return { status_code: 200, body: result };
@@ -1775,10 +1783,11 @@ export function registerApiTriggers(
     async (
       req: HttpRequest<{
         query?: string;
-        expandIds?: Array<string | { obsId: string; sessionId: string }>;
+        expandIds?: Array<string | { obsId: string; sessionId?: string }>;
         limit?: number;
         project?: string;
         includeLessons?: boolean;
+        targetLayer?: SearchLayer;
         agentId?: string;
         sessionId?: string;
         source?: string;
@@ -1786,10 +1795,34 @@ export function registerApiTriggers(
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
-      if (
-        !req.body?.query &&
-        (!req.body?.expandIds || req.body.expandIds.length === 0)
-      ) {
+      if (req.body?.targetLayer !== undefined && !isSearchLayer(req.body.targetLayer)) {
+        return { status_code: 400, body: { error: "targetLayer must be one of: all, memory, observation" } };
+      }
+      const body = req.body ?? {};
+      for (const field of ["query", "project", "agentId", "sessionId", "source"] as const) {
+        if (body[field] !== undefined && typeof body[field] !== "string") {
+          return { status_code: 400, body: { error: `${field} must be a string` } };
+        }
+      }
+      if (body.includeLessons !== undefined && typeof body.includeLessons !== "boolean") {
+        return { status_code: 400, body: { error: "includeLessons must be a boolean" } };
+      }
+      if (body.expandIds !== undefined && (
+        !Array.isArray(body.expandIds) || !body.expandIds.every((entry) => {
+          if (typeof entry === "string") return entry.trim().length > 0;
+          return entry && typeof entry === "object" &&
+            typeof entry.obsId === "string" && entry.obsId.trim().length > 0 &&
+            (entry.sessionId === undefined || (typeof entry.sessionId === "string" && entry.sessionId.trim().length > 0));
+        })
+      )) {
+        return { status_code: 400, body: { error: "expandIds must be an array of non-empty IDs or objects with obsId and optional sessionId strings" } };
+      }
+      const expandIds = body.expandIds?.map((entry) => {
+        if (typeof entry === "string") return entry.trim();
+        if (entry.sessionId !== undefined) return { obsId: entry.obsId.trim(), sessionId: entry.sessionId.trim() };
+        return entry.obsId.trim();
+      });
+      if (!body.query?.trim() && !expandIds?.length) {
         return {
           status_code: 400,
           body: { error: "query or expandIds is required" },
@@ -1803,11 +1836,12 @@ export function registerApiTriggers(
       // section). Drops unknown fields so a misbehaving client can't
       // inject downstream-only options.
       const payload = {
-        query: req.body?.query,
-        expandIds: req.body?.expandIds,
+        query: body.query?.trim() || undefined,
+        expandIds,
         limit: req.body?.limit,
         project: req.body?.project,
         includeLessons: req.body?.includeLessons,
+        targetLayer: req.body?.targetLayer ?? "all",
         agentId: req.body?.agentId,
         sessionId: req.body?.sessionId,
         source: req.body?.source ?? sourceFromHeader,
@@ -3543,11 +3577,12 @@ export function registerApiTriggers(
         actions: df(actions, "updatedAt"),
       };
       if (!project) {
+        const graphState = await pinGraphState(kv);
         const semantic = await kv.list<import("../types.js").SemanticMemory>(KV.semantic);
         const procedural = await kv.list<import("../types.js").ProceduralMemory>(KV.procedural);
         const relations = await kv.list<import("../types.js").MemoryRelation>(KV.relations);
-        const graphNodes = await kv.list<import("../types.js").GraphNode>(KV.graphNodes);
-        const graphEdges = await kv.list<import("../types.js").GraphEdge>(KV.graphEdges);
+        const graphNodes = await graphState.list<import("../types.js").GraphNode>(KV.graphNodes);
+        const graphEdges = await graphState.list<import("../types.js").GraphEdge>(KV.graphEdges);
         body.semantic = df(semantic, "updatedAt");
         body.procedural = df(procedural, "updatedAt");
         body.relations = df(relations, "createdAt");

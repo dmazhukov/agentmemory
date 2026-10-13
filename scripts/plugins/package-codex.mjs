@@ -67,7 +67,7 @@ for (const [flavor, { mcp, hooks }] of Object.entries(FLAVORS)) {
     cpSync(join(plugin, directory), join(destination, directory), { recursive: true });
   }
   const agentsSkill = join(destination, "skills/agentmemory-agents/SKILL.md");
-  writeFileSync(agentsSkill, readFileSync(agentsSkill, "utf8").replace("If unknown, default to `claude-code`.", "If unknown, default to `codex`."));
+  writeFileSync(agentsSkill, readFileSync(agentsSkill, "utf8").replace("Detect the calling agent. If unknown, ask which host to configure before changing files.", "This package runs in Codex; default to `codex` unless the user explicitly requests another host."));
   cpSync(join(root, "LICENSE"), join(destination, "LICENSE"));
   if (hooks) {
     mkdirSync(join(destination, "hooks"));

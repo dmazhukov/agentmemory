@@ -1670,7 +1670,7 @@
     var state = {
       activeTab: 'dashboard',
       dashboard: { loaded: false },
-      graph: { loaded: false, loading: false, dirty: false, nodeMap: {}, edgeMap: {}, degrees: {}, rev: 0, localDegree: null, localDegreeRev: -1, stats: null, hidden: {}, search: '', searchOpen: false, searchIndex: 0, selectedId: null, detail: null, queryError: null, disabledInfo: null, warning: '', truncated: false, totalNodes: 0, totalEdges: 0, requestSeq: 0, fetches: 0, patches: 0, lastPatchAt: 0, fresh: {}, simStale: false, rebuildResult: '' },
+      graph: { loaded: false, loading: false, dirty: false, nodeMap: {}, edgeMap: {}, degrees: {}, rev: 0, localDegree: null, localDegreeRev: -1, stats: null, hidden: {}, search: '', searchOpen: false, searchIndex: 0, selectedId: null, detail: null, queryError: null, disabledInfo: null, warning: '', truncated: false, totalNodes: 0, totalEdges: 0, requestSeq: 0, searchRequestSeq: 0, resetSeq: 0, generation: undefined, fetches: 0, patches: 0, lastPatchAt: 0, fresh: {}, simStale: false, rebuildResult: '' },
       memories: { search: '', typeFilter: '', projectFilter: '', agentFilter: '', selectedId: null, nextCursor: null, loadingMore: false, searchIds: null, searchMode: '', searching: false, query: null, facets: null, checked: {}, editing: null, saving: false, pendingId: null, fetches: {}, diffId: null, error: '' },
       sessions: { selectedId: null, autoSelected: false, closed: false, nextCursor: null, loadingMore: false, filters: { q: '', project: '', agent: '', status: '' }, query: null, facets: null, detail: null, pendingObs: null, notice: null, summarizing: '' },
       audit: { opFilter: '', selectedIdx: null, from: '', to: '', q: '', query: null, loadingMore: false, exhausted: {}, fresh: {} },
@@ -2358,11 +2358,14 @@
       });
     }
 
-    async function loadSnapshot() {
+    async function loadSnapshot(retried) {
+      var resetSeq = state.graph.resetSeq;
       var snap = await apiGet('viewer/snapshot');
+      if (resetSeq !== state.graph.resetSeq) return retried ? false : loadSnapshot(true);
       if (!snap) return false;
       var graphBefore = store.graph && store.graph.updatedAt;
       var reconnect = !!store.snapshotAt;
+      noteGraphGeneration(snap.graph);
       applySnapshot(store, snap);
       renderFlagsChip();
       renderFlagsPanel();
@@ -2806,8 +2809,54 @@
       return graphNodeList().filter(function(n) { return !deg[n.id]; }).length;
     }
 
+    function clearGraphView() {
+      var g = state.graph;
+      g.resetSeq++;
+      g.requestSeq++;
+      g.searchRequestSeq++;
+      g.selectedId = null;
+      g.detail = null;
+      g.nodeMap = {};
+      g.edgeMap = {};
+      g.degrees = {};
+      g.fresh = {};
+      g.stats = null;
+      g.totalNodes = 0;
+      g.totalEdges = 0;
+      g.truncated = false;
+      g.loading = false;
+      g.loaded = false;
+      g.dirty = false;
+      g.queryError = null;
+      g.disabledInfo = null;
+      g.warning = '';
+      g.searchOpen = false;
+      g.rev++;
+      g.simStale = true;
+      if (graphReloadTimer) clearTimeout(graphReloadTimer);
+      graphReloadTimer = null;
+      graphSim.hoverId = null;
+      graphSim.drag = null;
+      graphSim.nodes = [];
+      graphSim.byId = {};
+      graphSim.edges = [];
+      graphSim.isolatedBox = null;
+      setRouteEntity('graph', '');
+      renderGraphDetail();
+      requestGraphDraw();
+    }
+
+    function noteGraphGeneration(data) {
+      if (!data) return;
+      var g = state.graph;
+      if (data.reset === true && data.source === 'items') store.graph = null;
+      if (data.reset === true || ('generation' in data && g.generation !== undefined && g.generation !== data.generation)) clearGraphView();
+      if ('generation' in data) g.generation = data.generation;
+    }
+
     function setGraphData(result) {
       var g = state.graph;
+      if (!(result.nodes || []).length && !result.truncated && !result.totalNodes && (g.selectedId || g.detail || Object.keys(g.nodeMap).length)) clearGraphView();
       var nodeMap = {};
       var edgeMap = {};
       (result.nodes || []).forEach(function(n) { if (n && n.id) nodeMap[n.id] = n; });
@@ -2841,6 +2890,7 @@
       g.loading = false;
       if (result === null) {
         var stats = await api('graph/stats', { readErrorBody: true });
+        if (seq !== g.requestSeq) return;
         if (stats && stats.error && stats.flag) {
           g.disabledInfo = stats;
           g.queryError = null;
@@ -2865,8 +2915,9 @@
 
     function applyGraphDelta(delta) {
       var g = state.graph;
-      if (!g.loaded || !delta) return false;
+      if (!delta || (!g.loaded && !delta.full)) return false;
       if (delta.full) {
+        if (!(delta.nodes || []).length && (g.selectedId || g.detail || Object.keys(g.nodeMap).length)) clearGraphView();
         var keepNodes = {};
         (delta.nodes || []).forEach(function(n) { keepNodes[n.id] = true; });
         Object.keys(g.nodeMap).forEach(function(id) { if (!keepNodes[id] && id !== g.selectedId) delete g.nodeMap[id]; });
@@ -2893,13 +2944,14 @@
       g.lastPatchAt = Date.now();
       Object.keys(touched).forEach(function(id) { g.fresh[id] = Date.now(); });
       if (g.selectedId && touched[g.selectedId] && g.detail && g.detail.id === g.selectedId) g.detail.stale = true;
+      g.loaded = true;
       return true;
     }
 
     function handleGraphChange(data) {
       var g = state.graph;
       if (!data) return;
-      if (!g.loaded) { g.dirty = true; return; }
+      noteGraphGeneration(data);
       if (data.source === 'snapshot') {
         if (data.delta && applyGraphDelta(data.delta)) {
           if (graphSim.canvas && state.activeTab === 'graph') { syncGraphSim(false); requestGraphDraw(); setTimeout(requestGraphDraw, 4200); }
@@ -2925,10 +2977,10 @@
 
     async function fetchGraphDetail(id) {
       var g = state.graph;
-      g.detail = { id: id, loading: true, data: null, error: '', stale: false };
+      var detail = g.detail = { id: id, loading: true, data: null, error: '', stale: false };
       renderGraphDetail();
       var res = await api('graph/node?id=' + encodeURIComponent(id), { readErrorBody: true });
-      if (!g.detail || g.detail.id !== id) return;
+      if (g.detail !== detail) return;
       if (!res || res.error) {
         g.detail = { id: id, loading: false, data: null, error: res && res.error ? res.error : 'request failed', stale: false };
       } else {
@@ -4021,9 +4073,11 @@
 
     async function searchGraphRemote(q) {
       var g = state.graph;
+      var seq = ++g.searchRequestSeq;
       var box = document.getElementById('graph-search-results');
       if (box) { box.hidden = false; box.innerHTML = '<div class="gs-empty">Searching all nodes…</div>'; }
       var res = await apiPost('graph/query', { query: q, limit: 50 });
+      if (seq !== g.searchRequestSeq) return;
       if (!res) {
         if (box) box.innerHTML = '<div class="gs-empty">The server search failed.</div>';
         return;

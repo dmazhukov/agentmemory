@@ -169,6 +169,12 @@ applyBlock(join(SKILLS, "agentmemory-config", "REFERENCE.md"), "env", env());
 applyBlock(join(SKILLS, "agentmemory-agents", "REFERENCE.md"), "agents", agents());
 applyBlock(join(SKILLS, "agentmemory-hooks", "REFERENCE.md"), "hooks", hooks());
 
+const troubleshooting = readFileSync(join(SKILLS, "_shared", "TROUBLESHOOTING.md"), "utf8");
+for (const entry of readdirSync(SKILLS, { withFileTypes: true })) {
+  if (!entry.isDirectory() || !existsSync(join(SKILLS, entry.name, "SKILL.md"))) continue;
+  applyBlock(join(SKILLS, entry.name, "TROUBLESHOOTING.md"), "troubleshooting", troubleshooting);
+}
+
 if (check && process.exitCode) {
   console.error("\nSkill reference docs are stale. Run: npm run skills:gen");
 } else if (!check) {

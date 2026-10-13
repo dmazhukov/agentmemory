@@ -5,6 +5,7 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { registerGraphFunction } from "../src/functions/graph.js";
+import { pinGraphState } from "../src/state/graph-generation.js";
 import type {
   CompressedObservation,
   GraphNode,
@@ -547,7 +548,7 @@ describe("Graph Functions", () => {
       };
       expect(result.success).toBe(true);
 
-      const snap = await kv.get<{
+      const snap = await (await pinGraphState(kv as never)).get<{
         stats: { totalNodes: number };
       }>("mem:graph:snapshot", "current");
       expect(snap?.stats.totalNodes).toBe(0);
@@ -564,7 +565,7 @@ describe("Graph Functions", () => {
 
       await sdk.trigger("mem::graph-reset", {});
 
-      const snap = await kv.get<{
+      const snap = await (await pinGraphState(kv as never)).get<{
         stats: { totalNodes: number; totalEdges: number };
       }>("mem:graph:snapshot", "current");
       expect(snap?.stats.totalNodes).toBe(0);

@@ -276,6 +276,9 @@ describe("Codex release packaging", () => {
     const agents = execFileSync("unzip", ["-p", archive, "skills/agentmemory-agents/SKILL.md"], { encoding: "utf8" });
     expect(agents).toContain("default to `codex`");
     expect(agents).not.toContain("default to `claude-code`");
+    const shared = readFileSync(join(root, "plugin/skills/agentmemory-agents/SKILL.md"), "utf8");
+    expect(shared).toContain("If unknown, ask which host to configure before changing files.");
+    expect(shared).not.toContain("default to `codex`");
   });
 });
 

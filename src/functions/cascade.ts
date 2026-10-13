@@ -1,3 +1,4 @@
+import { pinGraphState } from "../state/graph-generation.js";
 import type { IIIClient } from "iii-sdk";
 import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
@@ -5,9 +6,10 @@ import { withKeyedLock } from "../state/keyed-mutex.js";
 import type { Memory, GraphNode, GraphEdge } from "../types.js";
 import { recordAudit } from "./audit.js";
 
-export function registerCascadeFunction(sdk: IIIClient, kv: StateKV): void {
+export function registerCascadeFunction(sdk: IIIClient, state: StateKV): void {
   sdk.registerFunction("mem::cascade-update", 
     async (data: { supersededMemoryId: string }) => {
+      const kv = await pinGraphState(state);
       if (!data.supersededMemoryId || typeof data.supersededMemoryId !== "string") {
         return { success: false, error: "supersededMemoryId is required" };
       }

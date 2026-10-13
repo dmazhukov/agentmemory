@@ -220,6 +220,7 @@ export interface SearchResult {
   observation: CompressedObservation;
   score: number;
   sessionId: string;
+  layer?: "memory" | "observation" | "lesson" | "insight";
 }
 
 export interface ContextBlock {
@@ -304,12 +305,15 @@ export interface MemoryRelation {
 
 export interface HybridSearchResult {
   observation: CompressedObservation;
+  layer?: "memory" | "observation" | "lesson" | "insight";
   bm25Score: number;
   vectorScore: number;
   graphScore: number;
   combinedScore: number;
   sessionId: string;
   graphContext?: string;
+  rerankScore?: number;
+  rerankPosition?: number;
 }
 
 export interface CompactSearchResult {
@@ -319,6 +323,7 @@ export interface CompactSearchResult {
   type: ObservationType;
   score: number;
   timestamp: string;
+  layer?: "memory" | "observation" | "lesson" | "insight";
 }
 
 export interface CompactLessonResult {
@@ -501,6 +506,21 @@ export interface GraphQueryResult {
   warning?: string;
 }
 
+export interface GraphIndexMembership {
+  ids: string[];
+}
+
+export interface GraphMutationWrite {
+  scope: string;
+  key: string;
+  value: unknown;
+}
+
+export interface GraphMutationJournal {
+  writes: GraphMutationWrite[];
+  snapshot: GraphSnapshot;
+}
+
 export interface GraphSnapshot {
   version: 1;
   topNodes: GraphNode[];
@@ -520,6 +540,8 @@ export interface GraphSnapshot {
   updatedAt: string;
   dirty: boolean;
   resetAt?: string;
+  sampleIncomplete?: boolean;
+  pendingMutation?: GraphMutationJournal;
 }
 
 export type ConsolidationTier =
@@ -883,6 +905,7 @@ export interface Insight {
   sourceMemoryIds: string[];
   sourceLessonIds: string[];
   sourceCrystalIds: string[];
+  evidenceVersion?: 1;
   project?: string;
   tags: string[];
   createdAt: string;

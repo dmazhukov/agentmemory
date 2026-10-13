@@ -70,6 +70,15 @@ describe("stored API secret", () => {
     expect(resolveClientSecret("http://127.0.0.1:3111")).toBe("from-env-file");
   });
 
+  it("explicit credential mode never borrows daemon files, including unresolved host references", () => {
+    ensureServerSecret();
+    writeFileSync(join(home, ".agentmemory", ".env"), "AGENTMEMORY_SECRET=unrelated-profile\n");
+    const env = { AGENTMEMORY_CREDENTIAL_MODE: "explicit" };
+    expect(resolveClientSecret("http://localhost:3111", env)).toBe("");
+    expect(resolveClientSecret("http://localhost:3111", { ...env, AGENTMEMORY_SECRET: "${AGENTMEMORY_SECRET}" })).toBe("");
+    expect(resolveClientSecret("http://localhost:3111", { ...env, AGENTMEMORY_SECRET: "profile-key" })).toBe("profile-key");
+  });
+
   it("treats unexpanded placeholders as unset", () => {
     const { secret } = ensureServerSecret();
     process.env[KEY] = "${AGENTMEMORY_SECRET}";

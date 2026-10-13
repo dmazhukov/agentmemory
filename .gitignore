@@ -31,3 +31,7 @@ eval/reports/
 eval/data/longmemeval/
 
 benchmark/results/capture-costs-*
+
+# Generated native package resources
+integrations/openclaw/skills/
+integrations/openclaw/LICENSE

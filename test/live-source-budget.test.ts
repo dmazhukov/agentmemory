@@ -14,7 +14,7 @@ vi.mock("../src/logger.js", () => ({ logger: { info: vi.fn(), warn: vi.fn(), err
 const sessionId = "live-source-budget";
 const scope = KV.observations(sessionId);
 const output = "captured evidence ".repeat(1500);
-const xml = "<type>file_read</type><title>Read configuration</title><facts><fact>Port configured</fact></facts><narrative>Read the configuration file.</narrative><concepts><concept>config</concept></concepts><files></files><importance>5</importance>";
+const xml = "<observation><type>file_read</type><title>Read configuration</title><facts><fact>Port configured</fact></facts><narrative>Read the configuration file.</narrative><concepts><concept>config</concept></concepts><files></files><importance>5</importance></observation>";
 
 function raw(id: string): RawObservation {
   return { id, sessionId, timestamp: "2026-09-30T00:00:00Z", hookType: "post_tool_use", toolName: "Read", toolOutput: output, raw: {} };

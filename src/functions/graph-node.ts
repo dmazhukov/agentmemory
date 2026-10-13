@@ -1,4 +1,5 @@
 import type { StateKV } from "../state/kv.js";
+import { pinGraphState } from "../state/graph-generation.js";
 import { KV } from "../state/schema.js";
 import type { CompressedObservation, GraphEdge, GraphNode, Memory, Session } from "../types.js";
 import { getSearchIndex } from "./search.js";
@@ -53,6 +54,7 @@ function matchesName(values: string[] | undefined, name: string): boolean {
 }
 
 export async function describeGraphNode(kv: StateKV, nodeId: string): Promise<GraphNodeDetail | null> {
+  kv = await pinGraphState(kv);
   const node = await kv.get<GraphNode>(KV.graphNodes, nodeId);
   if (!node) return null;
 
