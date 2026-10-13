@@ -112,15 +112,30 @@ describe("hook event ids for distinct events under one prompt", () => {
 
   it("gives two permission prompts in the same prompt different ids", async () => {
     const a = await send("notification.mjs", permissionPrompt("Claude needs your permission to use Bash"));
-    const b = await send("notification.mjs", permissionPrompt("Claude needs your permission to use Bash"));
+    const b = await send("notification.mjs", permissionPrompt("Claude needs your permission to use Edit"));
     expect(a.eventId).not.toBe(b.eventId);
   });
 
-  it("keeps one id when the same subagent or task event is delivered twice", async () => {
+  it("gives the same permission prompt from two subagents different ids", async () => {
+    const message = "Claude needs your permission to use Bash";
+    const a = await send("notification.mjs", { ...permissionPrompt(message), agent_id: "a1c4e7f0b2d5a8c13" });
+    const b = await send("notification.mjs", { ...permissionPrompt(message), agent_id: "b9d2f5a8c1e4b7d06" });
+    expect(a.eventId).not.toBe(b.eventId);
+  });
+
+  it("keeps permission prompts apart when the host sends no prompt id", async () => {
+    const { prompt_id: _omit, ...payload } = permissionPrompt("Claude needs your permission to use Bash");
+    const a = await send("notification.mjs", payload);
+    const b = await send("notification.mjs", payload);
+    expect(a.eventId).not.toBe(b.eventId);
+  });
+
+  it("keeps one id when the same subagent, task or permission event is delivered twice", async () => {
     for (const [script, payload] of [
       ["subagent-stop.mjs", subagentStop("c3e6a9d2f5b8c1e47", "Done")],
       ["subagent-start.mjs", subagentStart("c3e6a9d2f5b8c1e47")],
       ["task-completed.mjs", taskCompleted("task-003", "Write the migration")],
+      ["notification.mjs", permissionPrompt("Claude needs your permission to use Write")],
     ] as const) {
       const first = await send(script, payload);
       const again = await send(script, payload);
@@ -142,6 +157,15 @@ describe("hook event ids for distinct events under one prompt", () => {
       subagentStop("d4f7b0e3a6c9d2f58", "Draft ready, tests added", { stop_hook_active: true }),
     );
     expect(final.eventId).not.toBe(first.eventId);
+  });
+
+  it("gives a subagent that stops again with the same reply after a blocking stop hook a new id", async () => {
+    const first = await send("subagent-stop.mjs", subagentStop("a7c0e3b6d9f2a5c81", "Draft ready"));
+    const again = await send(
+      "subagent-stop.mjs",
+      subagentStop("a7c0e3b6d9f2a5c81", "Draft ready", { stop_hook_active: true }),
+    );
+    expect(again.eventId).not.toBe(first.eventId);
   });
 
   it("stores both subagent reports when the server dedups by event id", async () => {
