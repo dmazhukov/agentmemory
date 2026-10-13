@@ -19,9 +19,9 @@ Generated from `src/cli/connect/index.ts`. Do not edit the block below by hand; 
 | Droid (Factory.ai) | `droid` | Using MCP via ~/.factory/mcp.json. The `/mcp` slash command inside droid lists configured servers. Pass --with-hooks to also install the native ~/.factory/hooks.json auto-capture hooks. |
 | DeepSeek Harness | `dsh` | Using MCP via $DSH_HOME/cordis.patch.yml (the home-level patch layer every profile loads). Tools appear as mcp__agentmemory__*. Pass --with-hooks to also wire auto-capture through Harness's Claude Code hook bridge. |
 | Gemini CLI | `gemini-cli` | Using MCP (the only protocol Gemini CLI speaks). Memory bridge runs at :3111 underneath. |
-| Hermes Agent | `hermes` | Using MCP. Hooks are also available, see https://github.com/rohitg00/agentmemory/tree/main/integrations/hermes. |
+| Hermes Agent | `hermes` | Installs the native memory provider and bundled skills into the active Hermes profile. Credentials stay managed by Hermes. |
 | Kiro | `kiro` | Using MCP via ~/.kiro/settings/mcp.json (user-level). Workspace overrides live in .kiro/settings/mcp.json. |
-| OpenClaw | `openclaw` | Using MCP. Hooks are also available, see https://github.com/rohitg00/agentmemory/tree/main/integrations/openclaw. |
+| OpenClaw | `openclaw` | Installs native recall/capture and bundled skills into the active OpenClaw state directory. MCP tools are opt-in with --with-mcp. |
 | OpenCode | `opencode` | Using MCP via ~/.config/opencode/opencode.json (top-level `mcp` key). For full auto-capture, also install the bundled plugin in plugin/opencode/. |
 | OpenHuman | `openhuman` | Using native hooks (REST API at :3111). MCP not required. |
 | pi | `pi` | Using native lifecycle hooks against the REST API at :3111 (recall on agent start, capture on agent end, memory tools). MCP not required. |

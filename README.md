@@ -59,6 +59,7 @@
 </p>
 
 <p align="center">
+  <a href="https://skills.sh/rohitg00/agentmemory"><img src="https://skills.sh/b/rohitg00/agentmemory" alt="skills.sh" height="28" /></a>
   <a href="https://www.npmjs.com/package/@agentmemory/agentmemory"><img src="https://img.shields.io/npm/v/@agentmemory/agentmemory?color=CB3837&label=npm&style=for-the-badge&logo=npm" alt="npm version" /></a>
   <a href="https://github.com/rohitg00/agentmemory/actions"><img src="https://img.shields.io/github/actions/workflow/status/rohitg00/agentmemory/ci.yml?label=tests&style=for-the-badge&logo=github" alt="CI" /></a>
   <a href="https://github.com/rohitg00/agentmemory/blob/main/LICENSE"><img src="https://img.shields.io/github/license/rohitg00/agentmemory?color=blue&style=for-the-badge" alt="License" /></a>
@@ -71,7 +72,7 @@
   <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-tools.svg"><img src="assets/tags/stat-tools.svg" alt="54 MCP tools" height="38" /></picture>
   <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-hooks.svg"><img src="assets/tags/stat-hooks.svg" alt="12 auto hooks" height="38" /></picture>
   <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-deps.svg"><img src="assets/tags/stat-deps.svg" alt="0 external DBs" height="38" /></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-tests.svg"><img src="assets/tags/stat-tests.svg" alt="2,600+ tests passing" height="38" /></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-tests.svg"><img src="assets/tags/stat-tests.svg" alt="3,300+ tests passing" height="38" /></picture>
 </p>
 
 <p align="center">
@@ -703,51 +704,35 @@ copilot plugin install rohitg00/agentmemory:plugin
 
 `agentmemory connect copilot-cli` merges `mcpServers.agentmemory` into `~/.copilot/mcp-config.json` (or `$COPILOT_HOME/mcp-config.json` when `COPILOT_HOME` is set) and preserves existing servers. On native Windows this is the only automated `connect` adapter; configure every other native Windows agent manually. WSL `connect` is supported only when the target agent is installed in that same WSL environment. Copilot picks up the MCP server on next launch or after `/mcp`. Install the plugin as well when you want the full hook/skill experience.
 
-<details>
-<summary><b>OpenClaw (paste this prompt)</b></summary>
+### OpenClaw
 
-```text
-Install agentmemory for OpenClaw. Run `npx -y @agentmemory/agentmemory@latest` in a separate terminal to start the memory server on localhost:3111. Then add this to my OpenClaw MCP config so agentmemory is available with all 54 memory tools:
+Start the installed AgentMemory server in a separate terminal, then install its native plugin and skills:
 
-{
-  "mcpServers": {
-    "agentmemory": {
-      "command": "npx",
-      "args": ["-y", "@agentmemory/mcp"],
-      "env": {
-        "AGENTMEMORY_URL": "http://localhost:3111"
-      }
-    }
-  }
-}
-
-Restart OpenClaw. Verify with `curl http://localhost:3111/agentmemory/health`. Open http://localhost:3113 for the real-time viewer. For deeper memory-slot integration, copy `integrations/openclaw` to `~/.openclaw/extensions/agentmemory` and enable `plugins.slots.memory = "agentmemory"` in `~/.openclaw/openclaw.json`.
+```bash
+agentmemory
 ```
 
-Full guide: [`integrations/openclaw/`](integrations/openclaw/)
-
-</details>
-
-<details>
-<summary><b>Hermes Agent (paste this prompt)</b></summary>
-
-```text
-Install agentmemory for Hermes. Run `npx -y @agentmemory/agentmemory@latest` in a separate terminal to start the memory server on localhost:3111. Then add this to ~/.hermes/config.yaml so Hermes can use agentmemory as an MCP server with all 54 memory tools:
-
-mcp_servers:
-  agentmemory:
-    command: npx
-    args: ["-y", "@agentmemory/mcp"]
-
-memory:
-  provider: agentmemory
-
-Verify with `curl http://localhost:3111/agentmemory/health`. Open http://localhost:3113 for the real-time viewer. For deeper 6-hook memory provider integration (pre-LLM context injection, turn capture, MEMORY.md mirroring, system prompt block), copy integrations/hermes from the agentmemory repo to ~/.hermes/plugins/agentmemory.
+```bash
+agentmemory connect openclaw
 ```
 
-Full guide: [`integrations/hermes/`](integrations/hermes/)
+The connector uses the active OpenClaw state directory, installs the packaged plugin and its skills, and enables its memory slot and conversation access. Existing custom settings are preserved; replacing a different memory plugin requires `--force` and creates a backup. Restart OpenClaw and verify capture followed by recall in a fresh session. Native memories are scoped by the OpenClaw profile and agent identity.
 
-</details>
+For the wider memory tool surface, opt in with `agentmemory connect openclaw --with-mcp`. OpenClaw uses `mcp.servers`, not the legacy `mcpServers` key. The MCP tools access the configured backend without the native plugin's automatic profile filters, so use them only for a trusted, deliberately shared backend. See [OpenClaw setup, credentials, and verification](integrations/openclaw/).
+
+### Hermes Agent
+
+With the installed AgentMemory server running, install its provider and bundled skills, then configure credentials through Hermes:
+
+```bash
+agentmemory connect hermes
+hermes memory setup
+hermes memory status
+```
+
+Use the same `HERMES_HOME` for setup and subsequent Hermes sessions. The connector installs files before enabling `memory.provider: agentmemory` and preserves unrelated YAML settings. In Hermes setup, select AgentMemory and enter the backend URL and bearer credential. The provider reads credentials through Hermes's scoped API; it does not read the local AgentMemory secret file.
+
+Native save, recall, and automatic capture default to the active profile and gateway author. Verify a save in one session and recall in a fresh session under the same profile. `agentmemory connect hermes --with-mcp` optionally adds the wider tools under `mcp_servers`; those tools access the configured backend without automatic native profile filters. See [Hermes setup, scope, and verification](integrations/hermes/).
 
 ### Other agents
 
@@ -765,14 +750,14 @@ npx skills add rohitg00/agentmemory -y -a '*'   # install to every installed age
 
 This is **complementary** to `agentmemory connect <agent>`:
 
-- `agentmemory connect <agent>` writes the MCP server config so the tools are available.
+- `agentmemory connect <agent>` normally writes the MCP server config. Hermes and OpenClaw install their native integration and bundled skills by default; MCP is opt-in with `--with-mcp`.
 - `npx skills add rohitg00/agentmemory` installs the skills so the agent knows when to call them.
 
 For the few agents the skills CLI doesn't cover yet (Zed v1.3.x and below), drop the 17 SKILL.md files under the agent's native skill directory yourself; the same format works everywhere.
 
 #### Standard MCP block
 
-The agentmemory entry is the **same MCP server block** across every host that uses the `mcpServers` shape (Cursor, Claude Desktop, Cline, Roo Code, Gemini CLI, OpenClaw):
+The agentmemory entry is the **same MCP server block** across every host that uses the `mcpServers` shape (Cursor, Claude Desktop, Cline, Roo Code, Gemini CLI):
 
 ```json
 "agentmemory": {
@@ -799,13 +784,13 @@ The agentmemory entry is the **same MCP server block** across every host that us
 | **Gemini CLI** | `~/.gemini/settings.json` | `gemini mcp add agentmemory npx -y @agentmemory/mcp --scope user` (auto-merges). |
 | **GitHub Copilot CLI (MCP only)** | `~/.copilot/mcp-config.json` | `agentmemory connect copilot-cli` merges `mcpServers.agentmemory`; Copilot picks it up on next launch or `/mcp`. |
 | **GitHub Copilot CLI (full plugin)** | Copilot plugin install | `copilot plugin install rohitg00/agentmemory:plugin` for the plugin from the GitHub subdir. |
-| **OpenClaw** | OpenClaw MCP config | Same `mcpServers` block. Deeper: `openclaw plugins install ./integrations/openclaw` claims OpenClaw's memory slot (auto-switches from `memory-core`); set `plugins.entries.agentmemory.hooks.allowConversationAccess=true` or turn capture is silently blocked. See [`integrations/openclaw`](integrations/openclaw/). |
+| **OpenClaw** | Active OpenClaw state directory | `agentmemory connect openclaw` installs native recall/capture and bundled skills. Add `--with-mcp` for the wider tool surface using `mcp.servers`. See [setup and scope](integrations/openclaw/). |
 | **Codex CLI (MCP only)** | `.codex/config.toml` | TOML shape: `codex mcp add agentmemory -- npx -y @agentmemory/mcp`, or add `[mcp_servers.agentmemory]` manually. |
 | **Codex CLI (full plugin)** | Codex plugin marketplace | `codex plugin marketplace add rohitg00/agentmemory` then `codex plugin add agentmemory@agentmemory`. Registers MCP + 6 lifecycle hooks + 17 skills. Trust hooks and verify capture in your host; see [Codex setup and validation](docs/plugins/codex-local.md). |
 | **OpenCode (MCP only)** | `opencode.json` | Different shape: top-level `mcp` key, command as array: `{"mcp": {"agentmemory": {"type": "local", "command": ["npx", "-y", "@agentmemory/mcp"], "enabled": true}}}`. |
 | **OpenCode (full plugin)** | `plugin/opencode/` | 22 auto-capture hooks covering session lifecycle, messages, tools, errors. Project attribution is per-session, so one OpenCode process spanning several repositories files each session under its own project. Two slash commands (`/recall`, `/remember`). Copy `plugin/opencode/` into your OpenCode workspace and add the plugin entry to `opencode.json`. See [`plugin/opencode/README.md`](plugin/opencode/README.md) for the full hook table + gap analysis. |
 | **pi** | `~/.pi/agent/extensions/agentmemory` | `agentmemory connect pi` installs the bundled extension into pi's auto-discovery directory (recall on agent start, capture on agent end, `memory_search` / `memory_save` / `memory_health` tools, `/agentmemory-status`). `/reload` in a running pi picks it up. [`integrations/pi`](integrations/pi/) is also a pi package (`pi install ./integrations/pi` from a checkout). |
-| **Hermes Agent** | `~/.hermes/config.yaml` | `cp -r integrations/hermes ~/.hermes/plugins/agentmemory` + `memory.provider: agentmemory` gives the 6-hook memory provider (prefetch, turn capture, session end, pre-compress, MEMORY.md mirroring, system prompt block). Validate with `hermes plugins doctor` and `hermes memory status`. See [`integrations/hermes`](integrations/hermes/). |
+| **Hermes Agent** | `$HERMES_HOME/config.yaml`, default `~/.hermes/config.yaml` | `agentmemory connect hermes` installs the native provider and skills. Configure its scoped credentials with `hermes memory setup`. Add `--with-mcp` for the wider tool surface. See [setup and scope](integrations/hermes/). |
 | **Qwen Code** | `~/.qwen/settings.json` | `agentmemory connect qwen` writes the standard `mcpServers` block. Hook payload is field-compatible with Claude Code, so the existing 12-hook scripts work without modification; wire them via the `hooks` section in the same `settings.json`. |
 | **Antigravity IDE / 2.0** | `~/.gemini/config/mcp_config.json` | `agentmemory connect antigravity --with-hooks` installs MCP and capture hooks in the shared customization directory. See [Antigravity setup and limits](docs/plugins/antigravity.md). |
 | **Antigravity CLI** (`agy`) | `~/.gemini/config/mcp_config.json` | `agentmemory connect antigravity-cli --with-hooks` uses the same MCP and hook configuration as current IDE versions. Existing installations should refresh with `--force`; see the [upgrade notes](docs/plugins/antigravity.md). |
@@ -1061,11 +1046,15 @@ Memories decay over time (Ebbinghaus curve). Frequently accessed memories streng
 | **Auto-forgetting** | TTL expiry, contradiction detection, importance eviction |
 | **Privacy first** | API keys, secrets, `<private>` tags stripped before storage |
 | **Self-healing** | Circuit breaker, provider fallback chain, health monitoring |
-| **Claude bridge** | Bi-directional sync with MEMORY.md |
+| **Claude bridge** | Read MEMORY.md and export project memories without replacing existing files |
 | **Knowledge graph** | Entity extraction + BFS traversal |
 | **Team memory** | Namespaced shared + private across team members |
 | **Citation provenance** | Trace any memory back to source observations |
 | **Git snapshots** | Version, rollback, and diff memory state |
+
+The Claude bridge is opt-in: set `CLAUDE_MEMORY_BRIDGE=true` and `CLAUDE_PROJECT_PATH` to your project directory, then restart agentmemory. `memory_claude_bridge_sync` exports only the latest memories scoped to that project, excluding unscoped memories. The read direction continues to read existing `MEMORY.md` content.
+
+Export creates `MEMORY.md` only when it is absent. Existing files are preserved, including previous generated exports and edits made by you or Claude Code. Identical content returns `changed: false`; different content returns an error. To regenerate deliberately, move the existing file to a backup location (or remove it if no longer needed), then run the tool again. See the bridge settings in [`.env.example`](.env.example).
 
 ---
 
@@ -1150,7 +1139,7 @@ Three tool surfaces, smallest to largest: `AGENTMEMORY_TOOLS=core` trims visibil
 | `memory_relations` | Query relationship graph |
 | `memory_graph_query` | Knowledge graph traversal |
 | `memory_consolidate` | Run 4-tier consolidation |
-| `memory_claude_bridge_sync` | Sync with MEMORY.md |
+| `memory_claude_bridge_sync` | Read MEMORY.md or create a project export, preserving existing files |
 | `memory_team_share` | Share with team members |
 | `memory_team_feed` | Recent shared items |
 | `memory_audit` | Audit trail of operations |
@@ -1446,7 +1435,7 @@ fi
 | Prometheus / Grafana | iii OTEL + health monitor |
 | Custom plugin systems | `iii worker add <name>` |
 
-**220 source files · ~52,000 LOC · 2,600+ tests · 312 functions · 60 KV scopes**, all on three primitives. No `agentmemory plugin install`. The plugin system is iii itself.
+**232 source files · ~55,000 LOC · 3,300+ tests · 312 functions · 62 KV scopes**, all on three primitives. No `agentmemory plugin install`. The plugin system is iii itself.
 
 ---
 
@@ -1794,7 +1783,7 @@ Create `~/.agentmemory/.env`:
 
 138 endpoints on port `3111`. The REST API binds to `127.0.0.1` by default. Protected endpoints require `Authorization: Bearer <secret>`, and mesh sync endpoints require an explicitly set `AGENTMEMORY_SECRET` on both peers.
 
-**Authentication is on by default.** When `AGENTMEMORY_SECRET` is not set (in the shell or in `~/.agentmemory/.env`), the server generates a random secret on first start and stores it in `~/.agentmemory/secret` with mode `0600`. Every bundled client reads it from there when it talks to a local server: the CLI, the viewer, the hooks under `plugin/scripts`, the MCP server and the `@agentmemory/mcp` shim, the configs written by `agentmemory connect`, and the bundled OpenCode, Pi, OpenClaw, Hermes and filesystem-watcher integrations. The stored secret is only sent to loopback URLs (`localhost`, `127.0.0.0/8`, `::1`). An explicit `AGENTMEMORY_SECRET` always wins, and remote clients still need it set. Docker and the `deploy/` entrypoints already generate and export their own secret. To call the API by hand:
+**Authentication is on by default.** When `AGENTMEMORY_SECRET` is not set (in the shell or in `~/.agentmemory/.env`), the server generates a random secret on first start and stores it in `~/.agentmemory/secret` with mode `0600`. Most bundled clients read it from there when they talk to a local server: the CLI, the viewer, the hooks under `plugin/scripts`, the MCP server and the `@agentmemory/mcp` shim, the configs written by `agentmemory connect`, and the bundled OpenCode, Pi, OpenClaw and filesystem-watcher integrations. The Hermes provider and its optional MCP connection instead use credentials managed by Hermes; configure them with `hermes memory setup`. The stored secret is only sent to loopback URLs (`localhost`, `127.0.0.0/8`, `::1`). An explicit `AGENTMEMORY_SECRET` always wins, and remote clients still need it set. Docker and the `deploy/` entrypoints already generate and export their own secret. To call the API by hand:
 
 ```bash
 curl -H "Authorization: Bearer $(cat ~/.agentmemory/secret)" http://localhost:3111/agentmemory/health
@@ -1829,6 +1818,7 @@ curl -H "Authorization: Bearer $(cat ~/.agentmemory/secret)" http://localhost:31
 | `GET` | `/agentmemory/export` | Export all data |
 | `POST` | `/agentmemory/import` | Import from JSON |
 | `POST` | `/agentmemory/graph/query` | Knowledge graph query |
+| `POST` | `/agentmemory/graph/reset` | Start an empty graph generation; retain observations and memories |
 | `POST` | `/agentmemory/graph/compact` | Trim oversized graph provenance |
 | `POST` | `/agentmemory/team/share` | Share with team |
 | `GET` | `/agentmemory/audit` | Audit trail |
@@ -1850,6 +1840,10 @@ Full endpoint list: [`src/triggers/api.ts`](src/triggers/api.ts)
 Failed events are retried every `AGENTMEMORY_CAPTURE_RETRY_INTERVAL_MS` (10 s) with doubling backoff, up to `AGENTMEMORY_CAPTURE_MAX_ATTEMPTS` (5). Events that still fail stay in the inbox as dead letters, are listed on `/agentmemory/status` and the viewer Health page, and can be retried with `POST /agentmemory/capture/retry` (`{"eventId": "..."}` or `{"all": true}`). Accepted event ids are remembered for `AGENTMEMORY_CAPTURE_DEDUP_HOURS` (168 hours, at most `AGENTMEMORY_CAPTURE_EVENTS_MAX` ids), so a hook replayed after a timeout or a restart is stored once, while two separate tool calls with their own host ids are stored twice even when their content is identical. When an observation is deleted (forget, session delete, eviction, auto-forget or an import that replaces the store), its event is marked as deleted before the observation is removed, so a replay of that event inside the same window is answered as a duplicate and stores nothing. The state store writes to disk every 2 seconds, so an answered event can still be only in memory for a moment. To cover that, every `2xx` answer also carries the server's `bootId` (new at every start), `acceptedAt` and `durableAfterMs` (the save interval plus 1.5 s on the file store, 1.5 s on redis, where persistence is the operator's setting). Hooks keep the event in the local spool until that window has passed and delete it on a later call without another request. If the `bootId` has changed by then, the server restarted, so the hook sends the event again with the same `eventId`; an event that did reach the disk is not stored twice. The server also sends such events itself at start and every retry interval, so a restart loses nothing even when no hook runs afterwards. Older hooks ignore the extra fields, and new hooks against an older server discard the event on `2xx` as before.
 
 When the server is down, does not answer in time or returns a 5xx, the hook appends the observation to a local spool file, `<data dir>/capture-spool/<host>-<port>.jsonl` (override the folder with `AGENTMEMORY_CAPTURE_SPOOL_DIR`). The file is private to your user (mode 600), secrets are redacted the same way the server redacts them, it holds at most `AGENTMEMORY_CAPTURE_SPOOL_MAX_BYTES` (5 MiB) and drops entries older than `AGENTMEMORY_CAPTURE_SPOOL_MAX_AGE_HOURS` (168). When it is full, new entries are dropped and counted, and `/agentmemory/status` reports it. The hook still exits 0 within its time limit and adds no request when the server is healthy. The spool is sent at the next start and by the first hook that reaches the server again, in a background process so the agent does not wait. Event ids make this safe: an observation that did arrive before a timeout is not stored twice. `npx @agentmemory/agentmemory capture` shows the spool and the server inbox, `--drain` sends the spool now, and `GET /agentmemory/capture` returns the same as JSON. Set `AGENTMEMORY_CAPTURE_SPOOL=false` to turn the spool off.
+
+**Resetting the graph.** Call `POST /agentmemory/graph/reset` to start a new graph generation. The previous graph becomes inaccessible to graph queries, node lookups, statistics, and MCP reads; new imports and extraction populate the new generation. Existing observations and memories remain available. Old graph storage is retained.
+
+**Upgrading from v0.9.30:** if you already reset the graph before upgrading, run `POST /agentmemory/graph/reset` again after the upgrade. Earlier reset timestamps are not used to infer a completed generation reset.
 
 **Compacting graph provenance.** Each knowledge graph node and edge keeps the ids of the newest 32 observations it came from. Stores written before that cap can hold thousands of ids per hot node, which makes graph search and the viewer slow or drops the worker. agentmemory fixes this by itself: on the first start after upgrading it trims every node, edge, superseded edge (the temporal graph history) and the cached snapshot to the cap in the background, in small slices with a pause between them, so search, capture and the viewer keep working. It saves its progress, resumes after a restart and never runs again once it has finished. `/agentmemory/status` and the viewer Health page show it as pending, running (with the current scope and position), done or failed. Set `AGENTMEMORY_GRAPH_COMPACT_ON_BOOT=false` to turn it off.
 
@@ -1873,7 +1867,7 @@ curl -X POST http://localhost:3111/agentmemory/graph/compact -H "Content-Type: a
 ```bash
 npm run dev               # Hot reload
 npm run build             # Production build
-npm test                  # 2,600+ tests
+npm test                  # 3,300+ tests
 npm run test:integration  # API tests (requires running services)
 ```
 

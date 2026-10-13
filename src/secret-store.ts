@@ -90,6 +90,7 @@ export function resolveClientSecret(
 ): string {
   const fromEnv = usable(env[SECRET_KEY]);
   if (fromEnv) return fromEnv;
+  if (env.AGENTMEMORY_CREDENTIAL_MODE === "explicit") return "";
   if (!isLoopbackUrl(baseUrl)) return "";
   return readEnvFileSecret() || readStoredSecret();
 }

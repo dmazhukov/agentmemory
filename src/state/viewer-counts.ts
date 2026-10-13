@@ -40,6 +40,11 @@ export function setViewerCountsEmitter(fn: ((counts: ViewerCounts) => void) | nu
   emitter = fn;
 }
 
+export function invalidateViewerCounts(): void {
+  counts = null;
+  if (loading) changedWhileLoading = true;
+}
+
 function inAgentScope(record: { agentId?: string } | null | undefined): boolean {
   if (!record) return false;
   return !isAgentScopeIsolated() || record.agentId === getAgentId();
@@ -94,8 +99,10 @@ export async function getViewerCounts(kv: StateKV): Promise<ViewerCounts> {
         changedWhileLoading = false;
         result = await readCounts(kv);
       }
+      // A second concurrent change can exhaust the bounded refresh attempts.
+      // Return this read, but let the next request refresh instead of caching it.
+      counts = changedWhileLoading ? null : result;
       changedWhileLoading = false;
-      counts = result;
       return result;
     })().finally(() => {
       loading = null;

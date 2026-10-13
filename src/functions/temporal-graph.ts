@@ -1,3 +1,4 @@
+import { pinGraphState } from "../state/graph-generation.js";
 import type { IIIClient } from "iii-sdk";
 import type {
   GraphNode,
@@ -153,7 +154,7 @@ function parseTemporalGraphXml(
 
 export function registerTemporalGraphFunctions(
   sdk: IIIClient,
-  kv: StateKV,
+  state: StateKV,
   provider: MemoryProvider,
 ): void {
   sdk.registerFunction("mem::temporal-graph-extract", 
@@ -168,6 +169,7 @@ export function registerTemporalGraphFunctions(
         timestamp: string;
       }>;
     }) => {
+      const kv = await pinGraphState(state);
       if (!data.observations || data.observations.length === 0) {
         return { success: false, error: "No observations provided" };
       }
@@ -284,6 +286,7 @@ export function registerTemporalGraphFunctions(
       asOf?: string;
       includeHistory?: boolean;
     }): Promise<TemporalState | { error: string }> => {
+      const kv = await pinGraphState(state);
       const allNodes = await kv.list<GraphNode>(KV.graphNodes);
       const allEdges = await kv.list<GraphEdge>(KV.graphEdges);
 
@@ -362,6 +365,7 @@ export function registerTemporalGraphFunctions(
       from?: string;
       to?: string;
     }) => {
+      const kv = await pinGraphState(state);
       const allNodes = await kv.list<GraphNode>(KV.graphNodes);
       const allEdges = await kv.list<GraphEdge>(KV.graphEdges);
       const historicalEdges = await kv
