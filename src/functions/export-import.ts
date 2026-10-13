@@ -314,7 +314,11 @@ export function registerExportImportFunction(sdk: IIIClient, state: StateKV): vo
           error: `Unsupported export version: ${importData.version}`,
         };
       }
-      if (strategy === "replace" && importData.collectionPagination) {
+      const sessionPage = importData.pagination;
+      const partialSessions =
+        sessionPage !== undefined &&
+        ((sessionPage.offset ?? 0) > 0 || sessionPage.hasMore === true);
+      if (strategy === "replace" && (importData.collectionPagination || partialSessions)) {
         return {
           success: false,
           error:

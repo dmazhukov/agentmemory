@@ -499,6 +499,32 @@ describe("Export collection pages and import", () => {
     expect((await kv.list("mem:access")).length).toBe(5);
   });
 
+  it("refuses to replace the store with a page of sessions", async () => {
+    for (const id of ["ses_1", "ses_2", "ses_3"]) {
+      await kv.set("mem:sessions", id, { ...testSession, id });
+    }
+    for (const offset of [0, 2]) {
+      const page = await sdk.trigger("mem::export", { maxSessions: 2, offset });
+      const result = (await sdk.trigger("mem::import", {
+        exportData: page,
+        strategy: "replace",
+      })) as { success: boolean };
+      expect(result.success).toBe(false);
+    }
+    expect((await kv.list("mem:sessions")).length).toBe(3);
+    expect((await kv.list("mem:memories")).length).toBe(7);
+  });
+
+  it("replaces the store with a session window that covers every session", async () => {
+    await kv.set("mem:sessions", "ses_1", testSession);
+    const whole = await sdk.trigger("mem::export", { maxSessions: 10 });
+    const result = (await sdk.trigger("mem::import", {
+      exportData: whole,
+      strategy: "replace",
+    })) as { success: boolean };
+
+    expect(result.success).toBe(true);
+  });
 
   it("reports no further page for an access-log selection", async () => {
     const page = (await sdk.trigger("mem::export", {
