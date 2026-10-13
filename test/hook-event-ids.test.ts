@@ -93,8 +93,8 @@ describe("hook event ids for distinct events under one prompt", () => {
   }
 
   it("gives two subagents that stop in the same prompt different ids", async () => {
-    const a = await send("subagent-stop.mjs", subagentStop("a1c4e7f0b2d5a8c13", "Found the race in auth.ts"));
-    const b = await send("subagent-stop.mjs", subagentStop("b9d2f5a8c1e4b7d06", "No tests cover the parser"));
+    const a = await send("subagent-stop.mjs", subagentStop("a1c4e7f0b2d5a8c13", "Done"));
+    const b = await send("subagent-stop.mjs", subagentStop("b9d2f5a8c1e4b7d06", "Done"));
     expect(a.eventId).not.toBe(b.eventId);
   });
 
@@ -105,8 +105,8 @@ describe("hook event ids for distinct events under one prompt", () => {
   });
 
   it("gives two tasks completed in the same prompt different ids", async () => {
-    const a = await send("task-completed.mjs", taskCompleted("task-001", "Add login endpoint"));
-    const b = await send("task-completed.mjs", taskCompleted("task-002", "Add signup endpoint"));
+    const a = await send("task-completed.mjs", taskCompleted("task-001", "Add the endpoint"));
+    const b = await send("task-completed.mjs", taskCompleted("task-002", "Add the endpoint"));
     expect(a.eventId).not.toBe(b.eventId);
   });
 
@@ -120,6 +120,13 @@ describe("hook event ids for distinct events under one prompt", () => {
     const message = "Claude needs your permission to use Bash";
     const a = await send("notification.mjs", { ...permissionPrompt(message), agent_id: "a1c4e7f0b2d5a8c13" });
     const b = await send("notification.mjs", { ...permissionPrompt(message), agent_id: "b9d2f5a8c1e4b7d06" });
+    expect(a.eventId).not.toBe(b.eventId);
+  });
+
+  it("gives the same permission prompt in two prompts different ids", async () => {
+    const message = "Claude needs your permission to use Bash";
+    const a = await send("notification.mjs", permissionPrompt(message));
+    const b = await send("notification.mjs", { ...permissionPrompt(message), prompt_id: "9d3e5b7a-1c2f-4e6a-8b0d-2f4a6c8e0b1d" });
     expect(a.eventId).not.toBe(b.eventId);
   });
 
@@ -148,6 +155,17 @@ describe("hook event ids for distinct events under one prompt", () => {
     const a = await send("subagent-stop.mjs", payload);
     const b = await send("subagent-stop.mjs", payload);
     expect(a.eventId).not.toBe(b.eventId);
+  });
+
+  it("keeps subagent starts and tasks without a host id apart", async () => {
+    for (const [script, payload] of [
+      ["subagent-start.mjs", { sessionId: SESSION, cwd: turn.cwd, agentName: "explore" }],
+      ["task-completed.mjs", { sessionId: SESSION, cwd: turn.cwd, task_subject: "Write the migration" }],
+    ] as const) {
+      const a = await send(script, payload);
+      const b = await send(script, payload);
+      expect(a.eventId, script).not.toBe(b.eventId);
+    }
   });
 
   it("gives a subagent that stops again after a blocking stop hook a new id", async () => {
