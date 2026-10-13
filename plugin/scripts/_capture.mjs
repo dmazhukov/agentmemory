@@ -904,6 +904,6 @@ async function runDrainChild() {
 	}).catch(() => void 0);
 }
 //#endregion
-export { REST_URL, authHeaders, captureObservation, isDrainChild, runDrainChild, withEventId };
+export { REST_URL, authHeaders, captureObservation, isDrainChild, runDrainChild, stripPrivateData, withEventId };
 
 //# sourceMappingURL=_capture.mjs.map

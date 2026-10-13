@@ -376,39 +376,38 @@ describe("packaged Stop hook reply capture", () => {
     for (const sent of observes(daemon).map((r) => (r.body["data"] as { last_assistant_message: string }).last_assistant_message)) {
       expect(sent).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
       expect(sent.length).toBeLessThanOrEqual(4000);
+      expect(sent.startsWith("a")).toBe(true);
+      expect(sent.endsWith("b")).toBe(true);
     }
   });
 
-  it("redacts a private block whose closing tag falls past the reply cap", async () => {
-    const port = await freePort();
+  it("redacts a private block that the reply cap would cut open", async () => {
     const canary = "cobaltcanary";
-    const reply = [
-      "Opening: rotating the staging credentials. ",
-      "a".repeat(3400),
-      `<private>${canary}${"x".repeat(700)}</private>`,
-      "b".repeat(2000),
-      "Conclusion: ship the vermilionfix patch.",
-    ].join("");
-    expect(reply.indexOf(canary)).toBeLessThan(4000);
-    expect(reply.indexOf("</private>")).toBeGreaterThan(4000);
-
-    const offline = await runHook(port, stop({ last_assistant_message: reply }));
-
-    expect(offline.code).toBe(0);
-    expect(JSON.stringify(spooled(port))).not.toContain(canary);
-
+    const tail = `${"b".repeat(3000)}Conclusion: ship the vermilionfix patch.`;
+    const cases = {
+      head: `${"a".repeat(1960)}<private>${canary}${"x".repeat(700)}</private>${tail}`,
+      tail: `${"a".repeat(2500)}<private>${"x".repeat(100)}${canary}</private>${"b".repeat(1900)}`,
+    };
+    const port = await freePort();
     const daemon = await startDaemon();
-    await runHook(daemon.port, stop({ last_assistant_message: reply }));
 
-    const wire = observes(daemon)[0]!.body["data"] as Record<string, unknown>;
-    expect(JSON.stringify(wire)).not.toContain(canary);
-    expect(wire["last_assistant_message_truncated"]).toBe(true);
-    const [stored] = storedReplies(daemon);
-    expect(JSON.stringify(stored)).not.toContain(canary);
-    expect(stored!.source?.truncated).toBe(true);
-    expect(stored!.narrative).not.toContain(canary);
-    expect(await search(daemon, canary)).not.toContain(stored!.id);
-  });
+    for (const reply of Object.values(cases)) {
+      await runHook(port, stop({ last_assistant_message: reply }));
+      await runHook(daemon.port, stop({ stop_hook_active: true, last_assistant_message: reply }));
+    }
+
+    expect(JSON.stringify(spooled(port))).not.toContain(canary);
+    expect(observes(daemon)).toHaveLength(2);
+    for (const observed of observes(daemon)) {
+      const sent = (observed.body["data"] as { last_assistant_message: string }).last_assistant_message;
+      expect(sent).not.toContain(canary);
+      expect(sent).toContain("[REDACTED]");
+    }
+    for (const stored of storedReplies(daemon)) {
+      expect(JSON.stringify(stored)).not.toContain(canary);
+      expect(stored.source?.assistantResponse).toContain("[REDACTED]");
+    }
+  }, 15_000);
 
   it("keeps the conclusion of a reply longer than the cap recallable", async () => {
     const daemon = await startDaemon();
@@ -417,11 +416,12 @@ describe("packaged Stop hook reply capture", () => {
 
     await runHook(daemon.port, stop({ last_assistant_message: reply }));
 
-    const wire = observes(daemon)[0]!.body["data"] as { last_assistant_message: string; last_assistant_message_truncated?: boolean };
+    const wire = observes(daemon)[0]!.body["data"] as { last_assistant_message: string; last_assistant_message_bytes?: number };
     expect(wire.last_assistant_message).toHaveLength(4000);
-    expect(wire.last_assistant_message_truncated).toBe(true);
+    expect(wire.last_assistant_message_bytes).toBe(reply.length);
     const [stored] = storedReplies(daemon);
     expect(stored!.source?.truncated).toBe(true);
+    expect(stored!.source?.originalBytes).toBeGreaterThanOrEqual(reply.length);
     expect(stored!.source?.assistantResponse).toContain("Conclusion: switch the tokenizer to quasarlex streaming.");
     expect(stored!.narrative).toContain("Opening: the parser investigation is done.");
     expect(stored!.narrative).toContain("quasarlex streaming.");
@@ -434,7 +434,7 @@ describe("packaged Stop hook reply capture", () => {
     await runHook(daemon.port, stop({ last_assistant_message: "Short reply, nothing dropped." }));
 
     const wire = observes(daemon)[0]!.body["data"] as Record<string, unknown>;
-    expect(wire["last_assistant_message_truncated"]).toBeUndefined();
+    expect(wire["last_assistant_message_bytes"]).toBeUndefined();
     expect(storedReplies(daemon)[0]!.source?.truncated).toBe(false);
   });
 

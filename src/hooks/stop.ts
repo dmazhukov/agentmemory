@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { resolveProject, hookCwd } from "./_project.js";
-import { REST_URL, authHeaders, captureObservation, isDrainChild, runDrainChild, withEventId } from "./_capture.js";
-import { stripPrivateData } from "../functions/privacy.js";
+import { REST_URL, authHeaders, captureObservation, isDrainChild, runDrainChild, stripPrivateData, withEventId } from "./_capture.js";
 
 // Inlined — see src/hooks/sdk-guard.ts for canonical version. Kept local
 // per-hook so tsdown does not emit a shared hashed chunk that would churn
@@ -19,14 +18,14 @@ const REPLY_MAX_CHARS = 4000;
 
 // stripPrivateData only matches a closed <private> block, so the whole reply
 // has to be redacted before anything shortens it.
-function boundReply(reply: string): { text: string; truncated: boolean } {
+function boundReply(reply: string): { text: string; bytes?: number } {
   const safe = stripPrivateData(reply);
-  if (safe.length <= REPLY_MAX_CHARS) return { text: safe, truncated: false };
+  if (safe.length <= REPLY_MAX_CHARS) return { text: safe };
   let head = Math.ceil((REPLY_MAX_CHARS - 1) / 2);
   let tail = safe.length - (REPLY_MAX_CHARS - 1 - head);
   if (/[\uD800-\uDBFF]/.test(safe[head - 1]!)) head--;
   if (/[\uDC00-\uDFFF]/.test(safe[tail]!)) tail++;
-  return { text: `${safe.slice(0, head)}\u2026${safe.slice(tail)}`, truncated: true };
+  return { text: `${safe.slice(0, head)}\u2026${safe.slice(tail)}`, bytes: Buffer.byteLength(safe, "utf8") };
 }
 
 async function main() {
@@ -64,7 +63,7 @@ async function main() {
       timestamp: new Date().toISOString(),
       data: {
         last_assistant_message: bounded.text,
-        ...(bounded.truncated ? { last_assistant_message_truncated: true } : {}),
+        ...(bounded.bytes === undefined ? {} : { last_assistant_message_bytes: bounded.bytes }),
       },
     };
     await captureObservation(withEventId(body, {}), OBSERVE_TIMEOUT_MS).catch(() => {});

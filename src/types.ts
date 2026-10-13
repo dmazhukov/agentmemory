@@ -61,7 +61,7 @@ export interface RawObservation {
   toolOutput?: unknown;
   userPrompt?: string;
   assistantResponse?: string;
-  assistantResponseTruncated?: boolean;
+  assistantResponseBytes?: number;
   raw: unknown;
   modality?: "text" | "image" | "mixed";
   imageData?: string;
