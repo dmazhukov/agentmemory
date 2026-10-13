@@ -40,6 +40,37 @@ function hookCwd(data) {
 	if (projectDir && projectDir.trim()) return projectDir;
 }
 //#endregion
+//#region src/functions/privacy.ts
+const PRIVATE_TAG_RE = /<private>[\s\S]*?<\/private>/gi;
+const SECRET_PATTERN_SOURCES = [
+	/(?:api[_-]?key|secret|token|password|credential|auth)[\s]*[=:]\s*["']?[A-Za-z0-9_\-/.+]{20,}["']?/gi,
+	/Bearer\s+[A-Za-z0-9._\-+/=]{20,}/gi,
+	/(?<![\p{L}\p{N}\p{M}_])sk-proj-[A-Za-z0-9\-_]{20,}/gu,
+	/(?<![\p{L}\p{N}\p{M}_])(?:sk|pk|rk|ak)-[A-Za-z0-9][A-Za-z0-9\-_]{19,}/gu,
+	/(?<![\p{L}\p{N}\p{M}_])sk-ant-[A-Za-z0-9\-_]{20,}/gu,
+	/gh[pus]_[A-Za-z0-9]{36,}/g,
+	/github_pat_[A-Za-z0-9_]{22,}/g,
+	/xoxb-[A-Za-z0-9\-]+/g,
+	/AKIA[0-9A-Z]{16}/g,
+	/AIza[A-Za-z0-9\-_]{35}/g,
+	/eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
+	/npm_[A-Za-z0-9]{36}/g,
+	/glpat-[A-Za-z0-9\-_]{20,}/g,
+	/dop_v1_[A-Za-z0-9]{64}/g
+];
+const PRIVATE_KEY_BLOCK_RE = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|$)/g;
+const URL_CREDENTIALS_RE = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@:"'<>]*:[^\s/?#@"'<>]+@/gi;
+function stripPrivateData(input) {
+	let result = input.replace(PRIVATE_TAG_RE, "[REDACTED]");
+	result = result.replace(new RegExp(PRIVATE_KEY_BLOCK_RE.source, PRIVATE_KEY_BLOCK_RE.flags), "[REDACTED_SECRET]");
+	result = result.replace(new RegExp(URL_CREDENTIALS_RE.source, URL_CREDENTIALS_RE.flags), "$1[REDACTED_SECRET]@");
+	for (const source of SECRET_PATTERN_SOURCES) {
+		const pattern = new RegExp(source.source, source.flags);
+		result = result.replace(pattern, "[REDACTED_SECRET]");
+	}
+	return result;
+}
+//#endregion
 //#region src/hooks/stop.ts
 function isSdkChildContext(payload) {
 	if (process.env["AGENTMEMORY_SDK_CHILD"] === "1") return true;
@@ -50,6 +81,21 @@ const OBSERVE_TIMEOUT_MS = 2e3;
 const EXIT_CAP_MS = 3500;
 const END_CAP_MS = 1500;
 const REPLY_MAX_CHARS = 4e3;
+function boundReply(reply) {
+	const safe = stripPrivateData(reply);
+	if (safe.length <= REPLY_MAX_CHARS) return {
+		text: safe,
+		truncated: false
+	};
+	let head = Math.ceil((REPLY_MAX_CHARS - 1) / 2);
+	let tail = safe.length - (REPLY_MAX_CHARS - 1 - head);
+	if (/[\uD800-\uDBFF]/.test(safe[head - 1])) head--;
+	if (/[\uDC00-\uDFFF]/.test(safe[tail])) tail++;
+	return {
+		text: `${safe.slice(0, head)}\u2026${safe.slice(tail)}`,
+		truncated: true
+	};
+}
 async function main() {
 	if (isDrainChild()) return runDrainChild();
 	let input = "";
@@ -67,14 +113,17 @@ async function main() {
 	if (typeof reply === "string" && reply.trim()) {
 		const capture = setTimeout(() => process.exit(0), EXIT_CAP_MS).unref();
 		const cwd = hookCwd(data) || process.cwd();
-		const capped = reply.slice(0, REPLY_MAX_CHARS);
+		const bounded = boundReply(reply);
 		await captureObservation(withEventId({
 			hookType: "stop",
 			sessionId,
 			project: resolveProject(cwd),
 			cwd,
 			timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-			data: { last_assistant_message: /[\uD800-\uDBFF]$/.test(capped) ? capped.slice(0, -1) : capped }
+			data: {
+				last_assistant_message: bounded.text,
+				...bounded.truncated ? { last_assistant_message_truncated: true } : {}
+			}
 		}, {}), OBSERVE_TIMEOUT_MS).catch(() => {});
 		clearTimeout(capture);
 	}

@@ -44,7 +44,7 @@ export function createObservationSource(
   const retained = sanitize(fields) as Record<string, unknown>;
   const hookType = prefixWithinBytes(stripPrivateData(raw.hookType), 128) as HookType;
   const originalBytes = Math.max(bytes({ hookType: raw.hookType, ...retained }), previous?.originalBytes ?? 0);
-  const truncated = previous?.truncated === true || hookType !== raw.hookType;
+  const truncated = previous?.truncated === true || hookType !== raw.hookType || raw.assistantResponseTruncated === true;
   const full = { hookType, originalBytes, truncated, ...retained };
   if (bytes(full) <= maxBytes) return full;
 

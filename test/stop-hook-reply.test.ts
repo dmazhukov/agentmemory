@@ -365,13 +365,77 @@ describe("packaged Stop hook reply capture", () => {
     expect(storedReplies(daemon)).toHaveLength(1);
   }, 15_000);
 
-  it("does not split a character at the reply cap", async () => {
+  it("does not split a character at either edge of the reply cap", async () => {
+    const daemon = await startDaemon();
+    const atHead = `${"a".repeat(1999)}\u{1F600}${"b".repeat(2500)}`;
+    const atTail = `${"a".repeat(3000)}\u{1F600}${"b".repeat(1998)}`;
+
+    await runHook(daemon.port, stop({ last_assistant_message: atHead }));
+    await runHook(daemon.port, stop({ stop_hook_active: true, last_assistant_message: atTail }));
+
+    for (const sent of observes(daemon).map((r) => (r.body["data"] as { last_assistant_message: string }).last_assistant_message)) {
+      expect(sent).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+      expect(sent.length).toBeLessThanOrEqual(4000);
+    }
+  });
+
+  it("redacts a private block whose closing tag falls past the reply cap", async () => {
+    const port = await freePort();
+    const canary = "cobaltcanary";
+    const reply = [
+      "Opening: rotating the staging credentials. ",
+      "a".repeat(3400),
+      `<private>${canary}${"x".repeat(700)}</private>`,
+      "b".repeat(2000),
+      "Conclusion: ship the vermilionfix patch.",
+    ].join("");
+    expect(reply.indexOf(canary)).toBeLessThan(4000);
+    expect(reply.indexOf("</private>")).toBeGreaterThan(4000);
+
+    const offline = await runHook(port, stop({ last_assistant_message: reply }));
+
+    expect(offline.code).toBe(0);
+    expect(JSON.stringify(spooled(port))).not.toContain(canary);
+
+    const daemon = await startDaemon();
+    await runHook(daemon.port, stop({ last_assistant_message: reply }));
+
+    const wire = observes(daemon)[0]!.body["data"] as Record<string, unknown>;
+    expect(JSON.stringify(wire)).not.toContain(canary);
+    expect(wire["last_assistant_message_truncated"]).toBe(true);
+    const [stored] = storedReplies(daemon);
+    expect(JSON.stringify(stored)).not.toContain(canary);
+    expect(stored!.source?.truncated).toBe(true);
+    expect(stored!.narrative).not.toContain(canary);
+    expect(await search(daemon, canary)).not.toContain(stored!.id);
+  });
+
+  it("keeps the conclusion of a reply longer than the cap recallable", async () => {
+    const daemon = await startDaemon();
+    const reply = `Opening: the parser investigation is done. ${"Checked another fixture and its line endings. ".repeat(142)}Conclusion: switch the tokenizer to quasarlex streaming.`;
+    expect(reply.length).toBeGreaterThan(6500);
+
+    await runHook(daemon.port, stop({ last_assistant_message: reply }));
+
+    const wire = observes(daemon)[0]!.body["data"] as { last_assistant_message: string; last_assistant_message_truncated?: boolean };
+    expect(wire.last_assistant_message).toHaveLength(4000);
+    expect(wire.last_assistant_message_truncated).toBe(true);
+    const [stored] = storedReplies(daemon);
+    expect(stored!.source?.truncated).toBe(true);
+    expect(stored!.source?.assistantResponse).toContain("Conclusion: switch the tokenizer to quasarlex streaming.");
+    expect(stored!.narrative).toContain("Opening: the parser investigation is done.");
+    expect(stored!.narrative).toContain("quasarlex streaming.");
+    expect(await search(daemon, "quasarlex")).toContain(stored!.id);
+  }, 15_000);
+
+  it("reports a reply that fits the cap as untruncated", async () => {
     const daemon = await startDaemon();
 
-    await runHook(daemon.port, stop({ last_assistant_message: `${"a".repeat(3999)}\u{1F600} tail` }));
+    await runHook(daemon.port, stop({ last_assistant_message: "Short reply, nothing dropped." }));
 
-    const sent = (observes(daemon)[0]!.body["data"] as { last_assistant_message: string }).last_assistant_message;
-    expect(sent).toBe("a".repeat(3999));
+    const wire = observes(daemon)[0]!.body["data"] as Record<string, unknown>;
+    expect(wire["last_assistant_message_truncated"]).toBeUndefined();
+    expect(storedReplies(daemon)[0]!.source?.truncated).toBe(false);
   });
 
   it("makes the reply recallable through synthetic compression", async () => {

@@ -162,6 +162,7 @@ export function registerObserveFunction(
         if (payload.hookType === "stop") {
           const response = d["assistant_response"] ?? d["last_assistant_message"] ?? d["response"];
           if (typeof response === "string") raw.assistantResponse = response;
+          if (d["last_assistant_message_truncated"] === true) raw.assistantResponseTruncated = true;
         }
 
         extractedImage = extractImage(sanitizedRaw);
