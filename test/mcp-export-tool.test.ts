@@ -5,6 +5,8 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { registerMcpEndpoints } from "../src/mcp/server.js";
+import { registerExportImportFunction } from "../src/functions/export-import.js";
+import type { ExportData } from "../src/types.js";
 
 function mockKV() {
   const store = new Map<string, Map<string, unknown>>();
@@ -148,5 +150,24 @@ describe("memory_export MCP tool", () => {
 
     expect(result.status_code).toBe(200);
     expect(result.body).toHaveProperty("content");
+  });
+});
+
+describe("memory_export MCP tool against mem::export", () => {
+  it("returns the requested page of a real export", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerExportImportFunction(sdk as never, kv as never);
+    registerMcpEndpoints(sdk as never, kv as never);
+    for (let i = 0; i < 7; i++) {
+      await kv.set("mem:memories", `mem_${i}`, { id: `mem_${i}`, title: `m${i}` });
+    }
+
+    const result = await callTool(sdk, { collections: "memories", collectionLimit: 3 });
+    const body = result.body as { content: Array<{ text: string }> };
+    const page = JSON.parse(body.content[0]!.text) as ExportData;
+
+    expect(page.memories).toHaveLength(3);
+    expect(page.collectionPagination).toMatchObject({ limit: 3, hasMore: true });
   });
 });

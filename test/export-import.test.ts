@@ -498,6 +498,16 @@ describe("Export collection pages and import", () => {
     expect(result.success).toBe(false);
     expect((await kv.list("mem:access")).length).toBe(5);
   });
+
+
+  it("reports no further page for an access-log selection", async () => {
+    const page = (await sdk.trigger("mem::export", {
+      collections: "accessLogs",
+      collectionLimit: 3,
+    })) as ExportData;
+
+    expect(page.collectionPagination?.hasMore).toBe(false);
+  });
 });
 
 describe("Export collection allowlist", () => {
@@ -520,6 +530,7 @@ describe("Export collection allowlist", () => {
   });
 
   it("drops the collections outside the allowlist", async () => {
+    await kv.set("mem:access", "mem_0", { memoryId: "mem_0", count: 1, lastAt: "2026-02-01T00:00:00Z", recent: [] });
     const result = (await sdk.trigger("mem::export", {
       collections: ["memories", "summaries"],
     })) as ExportData;
@@ -527,6 +538,7 @@ describe("Export collection allowlist", () => {
     expect(result.memories.length).toBe(7);
     expect(result.summaries.length).toBe(1);
     expect(result.graphNodes).toBeUndefined();
+    expect(result.accessLogs).toBeUndefined();
   });
 
   it("accepts the allowlist as a comma-separated string", async () => {
@@ -571,6 +583,7 @@ describe("Export collection allowlist", () => {
 
     expect(result.memories.length).toBe(7);
     expect(result.graphNodes).toBeUndefined();
+    expect(result.collectionPagination?.collections).toEqual(["memories"]);
     expect(result.collectionPagination?.hasMore).toBe(false);
   });
 
