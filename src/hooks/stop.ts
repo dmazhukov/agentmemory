@@ -12,7 +12,8 @@ function isSdkChildContext(payload: unknown): boolean {
 }
 
 const OBSERVE_TIMEOUT_MS = 2000;
-const EXIT_CAP_MS = 2500;
+const EXIT_CAP_MS = 3500;
+const END_CAP_MS = 1500;
 const REPLY_MAX_CHARS = 4000;
 
 async function main() {
@@ -37,29 +38,30 @@ async function main() {
   }
 
   const sessionId = ((data.session_id || data.sessionId || data.conversation_id) as string) || "unknown";
-
   const reply = data.last_assistant_message;
   if (typeof reply === "string" && reply.trim()) {
+    const capture = setTimeout(() => process.exit(0), EXIT_CAP_MS).unref();
     const cwd = hookCwd(data) || process.cwd();
+    const capped = reply.slice(0, REPLY_MAX_CHARS);
     const body = {
       hookType: "stop",
       sessionId,
       project: resolveProject(cwd),
       cwd,
       timestamp: new Date().toISOString(),
-      data: { last_assistant_message: reply.slice(0, REPLY_MAX_CHARS) },
+      data: { last_assistant_message: /[\uD800-\uDBFF]$/.test(capped) ? capped.slice(0, -1) : capped },
     };
-    void captureObservation(withEventId(body, {}), OBSERVE_TIMEOUT_MS);
+    await captureObservation(withEventId(body, {}), OBSERVE_TIMEOUT_MS).catch(() => {});
+    clearTimeout(capture);
   }
 
+  setTimeout(() => process.exit(0), END_CAP_MS).unref();
   fetch(`${REST_URL}/agentmemory/session/end`, {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({ sessionId, final: false }),
     signal: AbortSignal.timeout(5000),
   }).catch(() => {});
-
-  setTimeout(() => process.exit(0), EXIT_CAP_MS).unref();
 }
 
 main().catch(() => process.exit(0));

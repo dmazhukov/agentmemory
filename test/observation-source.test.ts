@@ -184,12 +184,13 @@ describe("retained observation source", () => {
     vi.stubEnv("AGENTMEMORY_AUTO_COMPRESS", "true");
     const provider: MemoryProvider = {
       name: "test", summarize: vi.fn(),
-      compress: vi.fn(async () => "<type>decision</type><title>Chose bge-m3 embeddings</title><facts><fact>bge-m3 for Spanish</fact></facts><narrative>The agent chose bge-m3.</narrative><concepts><concept>embeddings</concept></concepts><files></files><importance>7</importance>"),
+      compress: vi.fn(async () => "<observation><type>decision</type><title>Chose bge-m3 embeddings</title><facts><fact>bge-m3 for Spanish</fact></facts><narrative>The agent chose bge-m3.</narrative><concepts><concept>embeddings</concept></concepts><files></files><importance>7</importance></observation>"),
     };
     registerCompressFunction(r.sdk as never, r.kv as never, provider);
     const reply = "We decided to use bge-m3 for Spanish embeddings.";
     const saved = await r.observe("stop", { last_assistant_message: reply });
     expect(JSON.stringify(vi.mocked(provider.compress).mock.calls)).toContain(reply);
+    expect(saved.title).toBe("Chose bge-m3 embeddings");
     expect(saved.source?.assistantResponse).toBe(reply);
   });
 

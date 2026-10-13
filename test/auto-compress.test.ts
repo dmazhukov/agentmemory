@@ -285,6 +285,21 @@ describe("buildSyntheticCompression", () => {
     expect(synth.narrative).toBe("We decided to use bge-m3 for Spanish embeddings.");
   });
 
+  it("keeps the opening and the end of a long reply without splitting a character", async () => {
+    const { buildSyntheticCompression } = await import(
+      "../src/functions/compress-synthetic.js"
+    );
+    const synth = buildSyntheticCompression({
+      id: "obs_6",
+      sessionId: "ses_1",
+      timestamp: new Date().toISOString(),
+      hookType: "stop",
+      assistantResponse: "a".repeat(199) + "😀" + "b".repeat(3000) + "😀" + "c".repeat(198),
+      raw: {},
+    });
+    expect(synth.narrative).toBe("a".repeat(199) + "…" + "c".repeat(198));
+  });
+
   it("maps post_tool_failure to the error type even with no tool name", async () => {
     const { buildSyntheticCompression } = await import(
       "../src/functions/compress-synthetic.js"
