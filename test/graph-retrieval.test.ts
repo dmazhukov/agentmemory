@@ -341,13 +341,55 @@ describe("GraphRetrieval", () => {
 
   it("ranks a re-scored observation after the ones that reached its score first", async () => {
     const nodes = [
-      makeNode("n1", "Quasar", "service", ["obs_a", "obs_b"]),
-      makeNode("n2", "Rollout", "service", ["obs_b"]),
+      makeNode("n1", "Quasar", "concept", ["obs_a", "obs_b"]),
+      makeNode("n2", "Rollout", "concept", ["obs_b"]),
     ];
     const kv = mockKV(nodes, [makeEdge("e1", "n1", "n2", "related_to", 1)]);
     const results = await new GraphRetrieval(kv as never).searchByEntities(["Quasar"], 2, 1);
 
     expect(results.map((r) => r.obsId)).toEqual(["obs_a"]);
+  });
+
+  it("ranks an observation re-scored by a better path after the ones that reached its score first", async () => {
+    const nodes = [
+      makeNode("start", "Quasar", "concept", ["obs_start"]),
+      makeNode("hub", "Hub", "concept", []),
+      makeNode("weak", "Weak", "concept", ["obs_b"]),
+      makeNode("x_first", "First", "concept", ["obs_a"]),
+      makeNode("y_second", "Second", "concept", ["obs_b"]),
+    ];
+    const edges = [
+      makeEdge("e1", "start", "hub", "related_to", 0.9),
+      makeEdge("e2", "start", "weak", "related_to", 0.5),
+      makeEdge("e3", "hub", "x_first", "related_to", 0.9),
+      makeEdge("e4", "hub", "y_second", "related_to", 0.9),
+    ];
+    const kv = mockKV(nodes, edges);
+    const results = await new GraphRetrieval(kv as never).searchByEntities(["Quasar"], 2, 3);
+
+    expect(results.map((r) => r.obsId)).toEqual(["obs_start", "obs_a", "obs_b"]);
+    expect(results[2]).toMatchObject({ score: results[1].score, pathLength: 3 });
+  });
+
+  it("ranks a re-scored chunk-expansion observation after the ones that reached its score first", async () => {
+    const nodes = [
+      makeNode("a_far", "Far", "concept", ["seed"]),
+      makeNode("b_near", "Near", "concept", ["seed"]),
+      makeNode("c_other", "Other", "concept", ["obs_other"]),
+      makeNode("mid", "Mid", "concept", ["obs_mid"]),
+      makeNode("target", "Target", "concept", ["obs_target"]),
+    ];
+    const edges = [
+      makeEdge("e1", "a_far", "mid", "related_to", 0.8),
+      makeEdge("e2", "mid", "target", "related_to", 0.8),
+      makeEdge("e3", "b_near", "c_other", "related_to", 0.8),
+      makeEdge("e4", "b_near", "target", "related_to", 0.8),
+    ];
+    const kv = mockKV(nodes, edges);
+    const results = await new GraphRetrieval(kv as never).expandFromChunks(["seed"], 2, 3);
+
+    expect(results.map((r) => r.obsId)).toEqual(["obs_mid", "obs_other", "obs_target"]);
+    expect(results[2]).toMatchObject({ score: results[0].score, pathLength: 2 });
   });
 
   it("respects maxDepth bound (Dijkstra stops at edge-count depth)", async () => {
