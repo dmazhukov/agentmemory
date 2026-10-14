@@ -1,4 +1,5 @@
 import { pinGraphState } from "../state/graph-generation.js";
+import { setImmediate } from "node:timers/promises";
 import type {
   GraphNode,
   GraphEdge,
@@ -20,16 +21,22 @@ function buildGraphContext(
 ): string {
   const parts: string[] = [];
   for (const step of path) {
-    const props = Object.entries(step.node.properties)
-      .slice(0, 3)
-      .map(([k, v]) => `${k}=${v}`)
-      .join(", ");
-    let line = `[${step.node.type}] ${step.node.name}`;
+    const properties: string[] = [];
+    for (const key in step.node.properties) {
+      if (!Object.hasOwn(step.node.properties, key)) continue;
+      const value = step.node.properties[key];
+      const text = typeof value === "string" ? value.slice(0, 256)
+        : typeof value === "number" || typeof value === "boolean" ? String(value) : "[value]";
+      properties.push(`${key.slice(0, 64)}=${text}`);
+      if (properties.length === 3) break;
+    }
+    const props = properties.join(", ");
+    let line = `[${step.node.type}] ${step.node.name.slice(0, 256)}`;
     if (props) line += ` (${props})`;
     if (step.edge) {
       line += ` --${step.edge.type}-->`;
-      if (step.edge.context?.reasoning) {
-        line += ` [${step.edge.context.reasoning}]`;
+      if (typeof step.edge.context?.reasoning === "string" && step.edge.context.reasoning) {
+        line += ` [${step.edge.context.reasoning.slice(0, 512)}]`;
       }
       if (step.edge.tvalid) {
         line += ` @${step.edge.tvalid}`;
@@ -37,12 +44,13 @@ function buildGraphContext(
     }
     parts.push(line);
   }
-  return parts.join(" ");
+  return parts.join(" ").slice(0, 4096);
 }
 
 const MAX_START_NODES = 25;
 const MAX_DISCOVERED_NODES = 2000;
 const MAX_EXAMINED_EDGES = 10_000;
+const MAX_EXAMINED_OBSERVATIONS = 10_000;
 
 type GraphView = {
   nodes: GraphNode[];
@@ -57,13 +65,30 @@ function compareText(a: string, b: string): number {
   return a < b ? -1 : 1;
 }
 
-async function readGraph(kv: StateKV): Promise<GraphView> {
+async function readGraph(kv: StateKV, signal: AbortSignal): Promise<GraphView> {
   const pinned = await pinGraphState(kv);
-  const nodes = (await pinned.list<GraphNode>(KV.graphNodes)).filter((node) => !node.stale);
-  const edges = (await pinned.list<GraphEdge>(KV.graphEdges)).filter((edge) => !edge.stale);
-  const byId = new Map(nodes.map((node) => [node.id, node]));
+  signal.throwIfAborted();
+  const rawNodes = await pinned.list<GraphNode>(KV.graphNodes);
+  signal.throwIfAborted();
+  const rawEdges = await pinned.list<GraphEdge>(KV.graphEdges);
+  signal.throwIfAborted();
+  const nodes: GraphNode[] = [];
+  const edges: GraphEdge[] = [];
+  const byId = new Map<string, GraphNode>();
+  let processed = 0;
+  for (const node of rawNodes) {
+    if (++processed % 256 === 0) await setImmediate();
+    signal.throwIfAborted();
+    if (node.stale) continue;
+    nodes.push(node);
+    byId.set(node.id, node);
+  }
   const adjacency: GraphView["adjacency"] = new Map();
-  for (const edge of edges) {
+  for (const edge of rawEdges) {
+    if (++processed % 256 === 0) await setImmediate();
+    signal.throwIfAborted();
+    if (edge.stale) continue;
+    edges.push(edge);
     if (!byId.has(edge.sourceNodeId) || !byId.has(edge.targetNodeId)) continue;
     for (const [from, to] of [[edge.sourceNodeId, edge.targetNodeId], [edge.targetNodeId, edge.sourceNodeId]]) {
       let neighbors = adjacency.get(from);
@@ -72,6 +97,8 @@ async function readGraph(kv: StateKV): Promise<GraphView> {
     }
   }
   for (const neighbors of adjacency.values()) {
+    if (++processed % 256 === 0) await setImmediate();
+    signal.throwIfAborted();
     neighbors.sort((a, b) =>
       b.edge.weight - a.edge.weight ||
       compareText(a.neighborId, b.neighborId) ||
@@ -86,8 +113,9 @@ export class GraphRetrieval {
 
   // The caller owns this query's lifetime; never retain its view across searches.
   createQuery(): GraphQuery {
+    const controller = new AbortController();
     let view: Promise<GraphView> | undefined;
-    return new GraphQuery(() => view ??= readGraph(this.kv), this.resolveLayer);
+    return new GraphQuery(() => view ??= readGraph(this.kv, controller.signal), this.resolveLayer, controller);
   }
 
   searchByEntities(...args: Parameters<GraphQuery["searchByEntities"]>): Promise<GraphRetrievalResult[]> {
@@ -104,7 +132,15 @@ export class GraphRetrieval {
 }
 
 export class GraphQuery {
-  constructor(private loadGraph: () => Promise<GraphView>, private resolveLayer?: SearchLayerResolver) {}
+  constructor(
+    private loadGraph: () => Promise<GraphView>,
+    private resolveLayer?: SearchLayerResolver,
+    private controller = new AbortController(),
+  ) {}
+
+  cancel(): void {
+    this.controller.abort();
+  }
 
   async searchByEntities(
     entityNames: string[],
@@ -116,15 +152,21 @@ export class GraphQuery {
     const names = [...exactNames];
     if (names.length === 0 || maxResults <= 0) return [];
     const graph = await this.loadGraph();
-    const matchingNodes = graph.nodes
-      .map((node) => ({ node, name: node.name.toLowerCase() }))
-      .filter(({ name }) => name.length > 0 && names.some((entity) => name.includes(entity) || entity.includes(name)))
-      .sort((a, b) =>
+    this.controller.signal.throwIfAborted();
+    const candidates: Array<{ node: GraphNode; name: string }> = [];
+    let examined = 0;
+    for (const node of graph.nodes) {
+      if (++examined % 256 === 0) await setImmediate();
+      this.controller.signal.throwIfAborted();
+      const name = node.name.toLowerCase();
+      if (!name || !names.some((entity) => name.includes(entity) || entity.includes(name))) continue;
+      candidates.push({ node, name });
+      candidates.sort((a, b) =>
         Number(exactNames.has(b.name)) - Number(exactNames.has(a.name)) ||
-        compareText(a.name, b.name) || compareText(a.node.id, b.node.id),
-      )
-      .slice(0, MAX_START_NODES)
-      .map(({ node }) => node);
+        compareText(a.name, b.name) || compareText(a.node.id, b.node.id));
+      if (candidates.length > MAX_START_NODES) candidates.pop();
+    }
+    const matchingNodes = candidates.map(({ node }) => node);
 
     if (matchingNodes.length === 0) return [];
 
@@ -132,46 +174,46 @@ export class GraphQuery {
     const visitedObs = new Set<string>();
 
     const budget = { nodes: MAX_DISCOVERED_NODES, edges: MAX_EXAMINED_EDGES };
+    let examinedObservations = 0;
+    for (const node of matchingNodes) {
+      for (const obsId of node.sourceObservationIds) {
+        if (++examinedObservations > MAX_EXAMINED_OBSERVATIONS) break;
+        if (examinedObservations % 256 === 0) await setImmediate();
+        this.controller.signal.throwIfAborted();
+        if (visitedObs.has(obsId) || !matchesSearchLayer(obsId, "", targetLayer, this.resolveLayer?.(obsId, ""))) continue;
+        visitedObs.add(obsId);
+        results.push({ obsId, sessionId: "", score: 1.0,
+          graphContext: `[${node.type}] ${node.name.slice(0, 256)}`, pathLength: 0 });
+      }
+    }
     for (const startNode of matchingNodes) {
       const paths = this.dijkstraTraversal(startNode, graph, maxDepth, budget);
 
       for (const path of paths) {
         const lastNode = path[path.length - 1].node;
+        const graphContext = buildGraphContext(path);
+        const pathLength = path.length;
+        const edgeWeights = path.filter((step) => step.edge).map((step) => step.edge!.weight);
+        const avgWeight = edgeWeights.length > 0
+          ? edgeWeights.reduce((a, b) => a + b, 0) / edgeWeights.length : 0.5;
+        const score = avgWeight / pathLength;
         for (const obsId of lastNode.sourceObservationIds) {
+          if (++examinedObservations > MAX_EXAMINED_OBSERVATIONS) break;
+          if (examinedObservations % 256 === 0) await setImmediate();
+          this.controller.signal.throwIfAborted();
           if (visitedObs.has(obsId) || !matchesSearchLayer(obsId, "", targetLayer, this.resolveLayer?.(obsId, ""))) continue;
           visitedObs.add(obsId);
-
-          const pathLength = path.length;
-          const edgeWeights = path
-            .filter((s) => s.edge)
-            .map((s) => s.edge!.weight);
-          const avgWeight =
-            edgeWeights.length > 0
-              ? edgeWeights.reduce((a, b) => a + b, 0) / edgeWeights.length
-              : 0.5;
-          const score = avgWeight * (1 / pathLength);
 
           results.push({
             obsId,
             sessionId: "",
             score,
-            graphContext: buildGraphContext(path),
+            graphContext,
             pathLength,
           });
         }
       }
 
-      for (const obsId of startNode.sourceObservationIds) {
-        if (visitedObs.has(obsId) || !matchesSearchLayer(obsId, "", targetLayer, this.resolveLayer?.(obsId, ""))) continue;
-        visitedObs.add(obsId);
-        results.push({
-          obsId,
-          sessionId: "",
-          score: 1.0,
-          graphContext: `[${startNode.type}] ${startNode.name}`,
-          pathLength: 0,
-        });
-      }
     }
 
     results.sort((a, b) => b.score - a.score);
@@ -186,21 +228,39 @@ export class GraphQuery {
   ): Promise<GraphRetrievalResult[]> {
     if (obsIds.length === 0 || maxResults <= 0) return [];
     const graph = await this.loadGraph();
+    this.controller.signal.throwIfAborted();
     const wanted = new Set(obsIds);
-    const linkedNodes = graph.nodes
-      .filter((node) => node.sourceObservationIds.some((id) => wanted.has(id)))
-      .sort((a, b) => compareText(a.id, b.id))
-      .slice(0, MAX_START_NODES);
+    const linkedNodes: GraphNode[] = [];
+    let examined = 0;
+    for (const node of graph.nodes) {
+      if (++examined % 256 === 0) await setImmediate();
+      this.controller.signal.throwIfAborted();
+      let linked = false;
+      for (const id of node.sourceObservationIds) {
+        if (++examined % 256 === 0) await setImmediate();
+        this.controller.signal.throwIfAborted();
+        if (wanted.has(id)) { linked = true; break; }
+      }
+      if (!linked) continue;
+      linkedNodes.push(node);
+      linkedNodes.sort((a, b) => compareText(a.id, b.id));
+      if (linkedNodes.length > MAX_START_NODES) linkedNodes.pop();
+    }
 
     const results: GraphRetrievalResult[] = [];
     const visitedObs = new Set<string>(obsIds);
 
     const budget = { nodes: MAX_DISCOVERED_NODES, edges: MAX_EXAMINED_EDGES };
+    let examinedObservations = 0;
     for (const node of linkedNodes) {
       const paths = this.dijkstraTraversal(node, graph, maxDepth, budget);
       for (const path of paths) {
         const lastNode = path[path.length - 1].node;
+        const graphContext = buildGraphContext(path);
         for (const obsId of lastNode.sourceObservationIds) {
+          if (++examinedObservations > MAX_EXAMINED_OBSERVATIONS) break;
+          if (examinedObservations % 256 === 0) await setImmediate();
+          this.controller.signal.throwIfAborted();
           if (visitedObs.has(obsId) || !matchesSearchLayer(obsId, "", targetLayer, this.resolveLayer?.(obsId, ""))) continue;
           visitedObs.add(obsId);
 
@@ -211,7 +271,7 @@ export class GraphQuery {
             obsId,
             sessionId: "",
             score,
-            graphContext: buildGraphContext(path),
+            graphContext,
             pathLength,
           });
         }
@@ -344,13 +404,6 @@ export class GraphQuery {
       }
     }
 
-    // Drop the startNode's own entry before returning: callers
-    // (searchByEntities, expandFromChunks) score start-node
-    // observations via a dedicated fallback loop with score=1.0. If
-    // we leave it in here, the start-path (length 1, no edges) goes
-    // through the generic path-scoring loop first — pathLength=1 +
-    // empty edgeWeights makes avgWeight fall to 0.5, the obs get
-    // marked visited, and the score=1.0 fallback becomes dead code.
     pathTo.delete(startNode.id);
     return Array.from(pathTo.values());
   }
