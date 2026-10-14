@@ -339,17 +339,6 @@ describe("GraphRetrieval", () => {
     expect(results[0]).toMatchObject({ score: 1.0, graphContext: "[concept] Alpha" });
   });
 
-  it("ranks a re-scored observation after the ones that reached its score first", async () => {
-    const nodes = [
-      makeNode("n1", "Quasar", "concept", ["obs_a", "obs_b"]),
-      makeNode("n2", "Rollout", "concept", ["obs_b"]),
-    ];
-    const kv = mockKV(nodes, [makeEdge("e1", "n1", "n2", "related_to", 1)]);
-    const results = await new GraphRetrieval(kv as never).searchByEntities(["Quasar"], 2, 1);
-
-    expect(results.map((r) => r.obsId)).toEqual(["obs_a"]);
-  });
-
   it("ranks an observation re-scored by a better path after the ones that reached its score first", async () => {
     const nodes = [
       makeNode("start", "Quasar", "concept", ["obs_start"]),
@@ -412,5 +401,36 @@ describe("GraphRetrieval", () => {
     const results = await retrieval.searchByEntities(["Start"], 2);
     expect(results.find((r) => r.obsId === "obs_3")).toBeDefined();
     expect(results.find((r) => r.obsId === "obs_4")).toBeUndefined();
+  });
+
+  it("preserves exact-match observations when a neighbor has oversized legacy provenance", async () => {
+    const kv = mockKV([
+      makeNode("root", "Cobalt", "concept", ["exact"]),
+      makeNode("neighbor", "Neighbor", "concept", Array.from({ length: 10_001 }, (_, i) => `related_${i}`)),
+    ], [makeEdge("edge", "root", "neighbor")]);
+    const results = await new GraphRetrieval(kv as never).searchByEntities(["Cobalt"]);
+    expect(results[0]).toMatchObject({ obsId: "exact", score: 1, pathLength: 0 });
+    expect(results).toHaveLength(20);
+  });
+
+  it("bounds graph context from oversized imported properties and edge reasoning", async () => {
+    const neighbor = makeNode("neighbor", "Neighbor", "concept", ["related"]);
+    neighbor.properties = Object.fromEntries(Array.from({ length: 10_000 }, (_, i) => [`property_${i}`, "x".repeat(1000)]));
+    const edge = { ...makeEdge("edge", "root", "neighbor"), context: { reasoning: "y".repeat(20_000) } };
+    const kv = mockKV([makeNode("root", "Cobalt", "concept", ["exact"]), neighbor], [edge]);
+    const results = await new GraphRetrieval(kv as never).searchByEntities(["Cobalt"]);
+    const related = results.find((result) => result.obsId === "related")!;
+    expect(related.graphContext).toContain("property_0=");
+    expect(related.graphContext.length).toBeLessThanOrEqual(4096);
+  });
+
+  it("keeps graph hits when imported optional reasoning is not text", async () => {
+    const edge = { ...makeEdge("edge", "root", "neighbor"), context: { reasoning: 42 } };
+    const kv = mockKV([
+      makeNode("root", "Cobalt", "concept", ["exact"]),
+      makeNode("neighbor", "Neighbor", "concept", ["related"]),
+    ], [edge as unknown as GraphEdge]);
+    const results = await new GraphRetrieval(kv as never).searchByEntities(["Cobalt"]);
+    expect(results.map((result) => result.obsId)).toEqual(["exact", "related"]);
   });
 });
