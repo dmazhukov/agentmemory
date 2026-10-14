@@ -18,6 +18,26 @@ function authHeaders(): Record<string, string> {
   return h;
 }
 
+function isPlainTextHost(): boolean {
+  return Boolean(
+    process.env["FACTORY_PROJECT_DIR"] ||
+      process.env["DROID_PLUGIN_ROOT"] ||
+      process.env["DEVIN_PROJECT_DIR"],
+  );
+}
+
+function contextPayload(data: Record<string, unknown>, context: string): string {
+  if (data.hook_event_name === "PreToolUse" && !isPlainTextHost()) {
+    return JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        additionalContext: context,
+      },
+    });
+  }
+  return context;
+}
+
 async function main() {
   // Default off: exit immediately so we don't even open stdin. This keeps
   // Claude Code's tool-call hot path as cheap as possible.
@@ -103,7 +123,7 @@ async function main() {
     if (res.ok) {
       const result = (await res.json()) as { context?: string };
       if (result.context) {
-        process.stdout.write(result.context);
+        process.stdout.write(contextPayload(data, result.context));
       }
     }
   } catch {

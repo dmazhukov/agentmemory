@@ -1729,9 +1729,10 @@ GRAPH_EXTRACTION_ENABLED=true
                                    #   SessionStart stdout as context)
                                    # - PreToolUse fires /agentmemory/enrich
                                    #   on every file-touching tool call
-                                   #   (resource cleanup, not a token
-                                   #   fix — PreToolUse stdout is debug
-                                   #   log only per Claude Code docs)
+                                   #   and adds the file context it
+                                   #   returns next to the tool result
+                                   #   (Claude Code, Codex), so each of
+                                   #   those calls costs tokens
                                    # Observations are still captured via
                                    # PostToolUse regardless of this flag.
 # GRAPH_EXTRACTION_ENABLED=false

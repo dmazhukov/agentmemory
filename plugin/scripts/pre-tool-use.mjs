@@ -84,6 +84,16 @@ function authHeaders() {
 	if (SECRET) h["Authorization"] = `Bearer ${SECRET}`;
 	return h;
 }
+function isPlainTextHost() {
+	return Boolean(process.env["FACTORY_PROJECT_DIR"] || process.env["DROID_PLUGIN_ROOT"] || process.env["DEVIN_PROJECT_DIR"]);
+}
+function contextPayload(data, context) {
+	if (data.hook_event_name === "PreToolUse" && !isPlainTextHost()) return JSON.stringify({ hookSpecificOutput: {
+		hookEventName: "PreToolUse",
+		additionalContext: context
+	} });
+	return context;
+}
 async function main() {
 	if (!INJECT_CONTEXT) return;
 	let input = "";
@@ -145,7 +155,7 @@ async function main() {
 		});
 		if (res.ok) {
 			const result = await res.json();
-			if (result.context) process.stdout.write(result.context);
+			if (result.context) process.stdout.write(contextPayload(data, result.context));
 		}
 	} catch {}
 }
