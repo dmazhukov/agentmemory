@@ -130,13 +130,15 @@ describe("GraphRetrieval", () => {
   });
 
   it("does not duplicate already-seen observations in expansion", async () => {
-    const nodes = [makeNode("n1", "file.ts", "file", ["obs_1", "obs_2"])];
-    const kv = mockKV(nodes, []);
+    const nodes = [
+      makeNode("n1", "file.ts", "file", ["obs_1"]),
+      makeNode("n2", "jwt", "concept", ["obs_1", "obs_2"]),
+    ];
+    const kv = mockKV(nodes, [makeEdge("e1", "n1", "n2")]);
     const retrieval = new GraphRetrieval(kv as never);
 
     const results = await retrieval.expandFromChunks(["obs_1"]);
-    const obsIds = results.map((r) => r.obsId);
-    expect(obsIds).not.toContain("obs_1");
+    expect(results.map((r) => r.obsId)).toEqual(["obs_2"]);
   });
 
   it("performs temporal query - current state", async () => {
@@ -260,6 +262,92 @@ describe("GraphRetrieval", () => {
     expect(root).toBeDefined();
     expect(root!.score).toBe(1.0);
     expect(root!.pathLength).toBe(0);
+  });
+
+  it("keeps an entity's own observation at 1.0 when a neighbour shares it", async () => {
+    const nodes = [
+      makeNode("n1", "React", "library", ["obs_shared"]),
+      makeNode("n2", "Hook", "concept", ["obs_shared", "obs_hook"]),
+    ];
+    const edges = [makeEdge("e1", "n1", "n2", "uses", 0.8)];
+    const kv = mockKV(nodes, edges);
+    const retrieval = new GraphRetrieval(kv as never);
+
+    const results = await retrieval.searchByEntities(["React"], 2);
+    expect(results.map((r) => r.obsId)).toEqual(["obs_shared", "obs_hook"]);
+    expect(results[0]).toMatchObject({ score: 1.0, pathLength: 0, graphContext: "[library] React" });
+  });
+
+  it.each([
+    ["Alpha", "Zeta"],
+    ["Zeta", "Alpha"],
+  ])("scores an observation owned by %s at 1.0 even when %s reaches it by path", async (owner, other) => {
+    const nodes = [
+      makeNode("owner", owner, "concept", ["obs_shared"]),
+      makeNode("other", other, "concept", ["obs_other"]),
+      makeNode("mid", "Mid", "concept", ["obs_shared"]),
+    ];
+    const edges = [makeEdge("e1", "other", "mid", "related_to", 0.8)];
+    const kv = mockKV(nodes, edges);
+    const retrieval = new GraphRetrieval(kv as never);
+
+    const results = await retrieval.searchByEntities([owner, other], 2);
+    expect(results.filter((r) => r.obsId === "obs_shared")).toHaveLength(1);
+    expect(results.find((r) => r.obsId === "obs_shared")).toMatchObject({
+      score: 1.0,
+      pathLength: 0,
+      graphContext: `[concept] ${owner}`,
+    });
+  });
+
+  it.each([
+    ["a_far", "b_near"],
+    ["b_far", "a_near"],
+  ])("keeps the closest path's score in chunk expansion whichever start (%s, %s) runs first", async (farId, nearId) => {
+    const nodes = [
+      makeNode(farId, "Far", "concept", ["seed"]),
+      makeNode(nearId, "Near", "concept", ["seed"]),
+      makeNode("mid", "Mid", "concept", ["obs_mid"]),
+      makeNode("target", "Target", "concept", ["obs_target"]),
+    ];
+    const edges = [
+      makeEdge("e1", farId, "mid", "related_to", 0.8),
+      makeEdge("e2", "mid", "target", "related_to", 0.8),
+      makeEdge("e3", nearId, "target", "related_to", 0.8),
+    ];
+    const kv = mockKV(nodes, edges);
+    const retrieval = new GraphRetrieval(kv as never);
+
+    const results = await retrieval.expandFromChunks(["seed"], 2, 10);
+    expect(results.filter((r) => r.obsId === "obs_target")).toHaveLength(1);
+    expect(results.find((r) => r.obsId === "obs_target")).toMatchObject({
+      score: 0.5 * (1 / 3),
+      pathLength: 2,
+      graphContext: expect.stringContaining("Near"),
+    });
+  });
+
+  it("keeps the first record when another start node ties on score", async () => {
+    const nodes = [
+      makeNode("a", "Alpha", "concept", ["obs_shared"]),
+      makeNode("z", "Zeta", "concept", ["obs_shared"]),
+    ];
+    const kv = mockKV(nodes, []);
+    const results = await new GraphRetrieval(kv as never).searchByEntities(["Alpha", "Zeta"], 2);
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ score: 1.0, graphContext: "[concept] Alpha" });
+  });
+
+  it("ranks a re-scored observation after the ones that reached its score first", async () => {
+    const nodes = [
+      makeNode("n1", "Quasar", "service", ["obs_a", "obs_b"]),
+      makeNode("n2", "Rollout", "service", ["obs_b"]),
+    ];
+    const kv = mockKV(nodes, [makeEdge("e1", "n1", "n2", "related_to", 1)]);
+    const results = await new GraphRetrieval(kv as never).searchByEntities(["Quasar"], 2, 1);
+
+    expect(results.map((r) => r.obsId)).toEqual(["obs_a"]);
   });
 
   it("respects maxDepth bound (Dijkstra stops at edge-count depth)", async () => {

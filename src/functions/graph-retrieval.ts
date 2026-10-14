@@ -128,8 +128,7 @@ export class GraphQuery {
 
     if (matchingNodes.length === 0) return [];
 
-    const results: GraphRetrievalResult[] = [];
-    const visitedObs = new Set<string>();
+    const best = new Map<string, GraphRetrievalResult>();
 
     const budget = { nodes: MAX_DISCOVERED_NODES, edges: MAX_EXAMINED_EDGES };
     for (const startNode of matchingNodes) {
@@ -137,21 +136,20 @@ export class GraphQuery {
 
       for (const path of paths) {
         const lastNode = path[path.length - 1].node;
+        const pathLength = path.length;
+        const edgeWeights = path
+          .filter((s) => s.edge)
+          .map((s) => s.edge!.weight);
+        const avgWeight =
+          edgeWeights.length > 0
+            ? edgeWeights.reduce((a, b) => a + b, 0) / edgeWeights.length
+            : 0.5;
+        const score = avgWeight * (1 / pathLength);
+
         for (const obsId of lastNode.sourceObservationIds) {
-          if (visitedObs.has(obsId) || !matchesSearchLayer(obsId, "", targetLayer, this.resolveLayer?.(obsId, ""))) continue;
-          visitedObs.add(obsId);
-
-          const pathLength = path.length;
-          const edgeWeights = path
-            .filter((s) => s.edge)
-            .map((s) => s.edge!.weight);
-          const avgWeight =
-            edgeWeights.length > 0
-              ? edgeWeights.reduce((a, b) => a + b, 0) / edgeWeights.length
-              : 0.5;
-          const score = avgWeight * (1 / pathLength);
-
-          results.push({
+          if (!this.outscores(best, obsId, score, targetLayer)) continue;
+          best.delete(obsId);
+          best.set(obsId, {
             obsId,
             sessionId: "",
             score,
@@ -162,9 +160,9 @@ export class GraphQuery {
       }
 
       for (const obsId of startNode.sourceObservationIds) {
-        if (visitedObs.has(obsId) || !matchesSearchLayer(obsId, "", targetLayer, this.resolveLayer?.(obsId, ""))) continue;
-        visitedObs.add(obsId);
-        results.push({
+        if (!this.outscores(best, obsId, 1.0, targetLayer)) continue;
+        best.delete(obsId);
+        best.set(obsId, {
           obsId,
           sessionId: "",
           score: 1.0,
@@ -174,8 +172,7 @@ export class GraphQuery {
       }
     }
 
-    results.sort((a, b) => b.score - a.score);
-    return results.slice(0, maxResults);
+    return [...best.values()].sort((a, b) => b.score - a.score).slice(0, maxResults);
   }
 
   async expandFromChunks(
@@ -192,22 +189,20 @@ export class GraphQuery {
       .sort((a, b) => compareText(a.id, b.id))
       .slice(0, MAX_START_NODES);
 
-    const results: GraphRetrievalResult[] = [];
-    const visitedObs = new Set<string>(obsIds);
+    const best = new Map<string, GraphRetrievalResult>();
 
     const budget = { nodes: MAX_DISCOVERED_NODES, edges: MAX_EXAMINED_EDGES };
     for (const node of linkedNodes) {
       const paths = this.dijkstraTraversal(node, graph, maxDepth, budget);
       for (const path of paths) {
         const lastNode = path[path.length - 1].node;
+        const pathLength = path.length;
+        const score = 0.5 * (1 / (pathLength + 1));
+
         for (const obsId of lastNode.sourceObservationIds) {
-          if (visitedObs.has(obsId) || !matchesSearchLayer(obsId, "", targetLayer, this.resolveLayer?.(obsId, ""))) continue;
-          visitedObs.add(obsId);
-
-          const pathLength = path.length;
-          const score = 0.5 * (1 / (pathLength + 1));
-
-          results.push({
+          if (wanted.has(obsId) || !this.outscores(best, obsId, score, targetLayer)) continue;
+          best.delete(obsId);
+          best.set(obsId, {
             obsId,
             sessionId: "",
             score,
@@ -218,8 +213,7 @@ export class GraphQuery {
       }
     }
 
-    results.sort((a, b) => b.score - a.score);
-    return results.slice(0, maxResults);
+    return [...best.values()].sort((a, b) => b.score - a.score).slice(0, maxResults);
   }
 
   async temporalQuery(
@@ -269,6 +263,17 @@ export class GraphQuery {
       currentState: this.getLatestEdges(validEdges),
       history: validEdges,
     };
+  }
+
+  private outscores(
+    best: Map<string, GraphRetrievalResult>,
+    obsId: string,
+    score: number,
+    targetLayer: SearchLayer,
+  ): boolean {
+    const current = best.get(obsId);
+    if (current) return score > current.score;
+    return matchesSearchLayer(obsId, "", targetLayer, this.resolveLayer?.(obsId, ""));
   }
 
   private getLatestEdges(edges: GraphEdge[]): GraphEdge[] {
@@ -344,13 +349,8 @@ export class GraphQuery {
       }
     }
 
-    // Drop the startNode's own entry before returning: callers
-    // (searchByEntities, expandFromChunks) score start-node
-    // observations via a dedicated fallback loop with score=1.0. If
-    // we leave it in here, the start-path (length 1, no edges) goes
-    // through the generic path-scoring loop first — pathLength=1 +
-    // empty edgeWeights makes avgWeight fall to 0.5, the obs get
-    // marked visited, and the score=1.0 fallback becomes dead code.
+    // Callers own the start node's observations: searchByEntities scores
+    // them at 1.0 and expandFromChunks leaves them out.
     pathTo.delete(startNode.id);
     return Array.from(pathTo.values());
   }
