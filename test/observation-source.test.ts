@@ -189,7 +189,9 @@ describe("retained observation source", () => {
     registerCompressFunction(r.sdk as never, r.kv as never, provider);
     const reply = "We decided to use bge-m3 for Spanish embeddings.";
     const saved = await r.observe("stop", { last_assistant_message: reply });
-    expect(JSON.stringify(vi.mocked(provider.compress).mock.calls)).toContain(reply);
+    const prompt = vi.mocked(provider.compress).mock.calls[0][1];
+    expect(prompt).toContain(`Assistant response:\n${reply}`);
+    expect(prompt.split(reply).length - 1).toBe(1);
     expect(saved.title).toBe("Chose bge-m3 embeddings");
     expect(saved.source?.assistantResponse).toBe(reply);
   });

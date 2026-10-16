@@ -145,7 +145,7 @@ export function registerCompressFunction(
         }
       }
 
-      const retainedOutput = raw.toolOutput ?? raw.assistantResponse ?? (raw.raw && Object.keys(Object(raw.raw)).length > 0 ? raw.raw : undefined);
+      const retainedOutput = raw.toolOutput ?? (raw.raw && Object.keys(Object(raw.raw)).length > 0 ? raw.raw : undefined);
       const prompt = buildCompressionPrompt({
         hookType: raw.hookType,
         toolName: raw.toolName,
