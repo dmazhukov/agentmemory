@@ -43,7 +43,11 @@ function loadEnvFile(): Record<string, string> {
     envFileCache = {};
     return envFileCache;
   }
-  const content = readFileSync(ENV_FILE, "utf-8");
+  envFileCache = parseEnvContent(readFileSync(ENV_FILE, "utf-8"));
+  return envFileCache;
+}
+
+export function parseEnvContent(content: string): Record<string, string> {
   const vars: Record<string, string> = {};
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
@@ -62,8 +66,7 @@ function loadEnvFile(): Record<string, string> {
     }
     vars[key] = val;
   }
-  envFileCache = vars;
-  return envFileCache;
+  return vars;
 }
 
 // Test hook: clears the memoized .env so the next loadEnvFile() re-reads disk

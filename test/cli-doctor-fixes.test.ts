@@ -112,6 +112,52 @@ describe("doctor v2 diagnostic catalog", () => {
     expect(status.ok).toBe(true);
   });
 
+  it("no-llm-provider-key passes when the agent-sdk fallback is enabled without a key", async () => {
+    const diagnostics = buildDiagnostics(
+      stubEffects({
+        readEnvFile: () => parseEnvFile("AGENTMEMORY_ALLOW_AGENT_SDK=true   # opt in\n"),
+      }),
+    );
+    const check = diagnostics.find((d) => d.id === "no-llm-provider-key")!;
+    const status = await check.check(stubCtx());
+    expect(status.ok).toBe(true);
+    expect(status.detail).toContain("agent-sdk");
+  });
+
+  it("no-llm-provider-key fails when OPENAI_API_KEY is reserved for embeddings", async () => {
+    const diagnostics = buildDiagnostics(
+      stubEffects({
+        readEnvFile: () =>
+          parseEnvFile(
+            "OPENAI_API_KEY=sk-real-openai-key\n" +
+              "OPENAI_API_KEY_FOR_LLM=false                   # Skip OpenAI auto-detection for LLM; key stays active for embeddings\n",
+          ),
+      }),
+    );
+    const check = diagnostics.find((d) => d.id === "no-llm-provider-key")!;
+    const status = await check.check(stubCtx());
+    expect(status.ok).toBe(false);
+  });
+
+  it("no-llm-provider-key reports only the keys the daemon uses for the LLM", async () => {
+    const statusFor = async (env: Record<string, string>) => {
+      const diagnostics = buildDiagnostics(stubEffects({ readEnvFile: () => env }));
+      const check = diagnostics.find((d) => d.id === "no-llm-provider-key")!;
+      return check.check(stubCtx());
+    };
+    expect(await statusFor({ OPENAI_API_KEY: "sk-real-openai-key" })).toEqual({
+      ok: true,
+      detail: "found: OPENAI_API_KEY",
+    });
+    expect(
+      await statusFor({
+        ANTHROPIC_API_KEY: "sk-ant-real-key-value",
+        OPENAI_API_KEY: "sk-real-openai-key",
+        OPENAI_API_KEY_FOR_LLM: "false",
+      }),
+    ).toEqual({ ok: true, detail: "found: ANTHROPIC_API_KEY" });
+  });
+
   it("engine-version-mismatch fails when iii reports the wrong version", async () => {
     const diagnostics = buildDiagnostics(
       stubEffects({ iiiBinaryVersion: () => "0.99.99" }),

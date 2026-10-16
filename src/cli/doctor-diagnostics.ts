@@ -16,6 +16,8 @@
 //   agentmemory doctor --all       # apply every available fix without prompting (CI)
 //   agentmemory doctor --dry-run   # show what each fix WOULD do; execute nothing
 
+import { detectLlmProviderKind, parseEnvContent } from "../config.js";
+
 export type DiagnosticStatus = {
   ok: boolean;
   /** Short status detail (one line). Shown alongside the check name. */
@@ -95,26 +97,7 @@ const PROVIDER_KEY_NAMES = [
   "MINIMAX_API_KEY",
 ] as const;
 
-export function parseEnvFile(content: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const eq = line.indexOf("=");
-    if (eq < 0) continue;
-    const key = line.slice(0, eq).trim();
-    let value = line.slice(eq + 1).trim();
-    // Strip surrounding quotes.
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    out[key] = value;
-  }
-  return out;
-}
+export const parseEnvFile = parseEnvContent;
 
 /** Returns the list of provider keys that look real (non-placeholder). */
 export function realProviderKeys(env: Record<string, string>): string[] {
@@ -199,16 +182,27 @@ export function buildDiagnostics(effects: DoctorEffects): Diagnostic[] {
       moreInfo:
         "Set at least one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, " +
         "OPENROUTER_API_KEY, MINIMAX_API_KEY. The daemon picks the first that resolves " +
-        "to a real (non-placeholder) value at startup.",
+        "to a real (non-placeholder) value at startup. OPENAI_API_KEY counts only while " +
+        "OPENAI_API_KEY_FOR_LLM is not false, and AGENTMEMORY_ALLOW_AGENT_SDK=true needs no key.",
       check: async () => {
         if (!effects.envFileExists()) {
           return { ok: false, detail: "env file missing (run env-missing fix first)" };
         }
-        const env = effects.readEnvFile();
-        const real = realProviderKeys(env);
+        const env = { ...effects.readEnvFile() };
+        for (const k of placeholderProviderKeys(env)) delete env[k];
+        if (detectLlmProviderKind(env) !== "llm") {
+          return { ok: false, detail: "no provider key set" };
+        }
+        const real = realProviderKeys(env).filter(
+          (k) =>
+            detectLlmProviderKind({
+              [k]: env[k],
+              OPENAI_API_KEY_FOR_LLM: env.OPENAI_API_KEY_FOR_LLM,
+            }) === "llm",
+        );
         return {
-          ok: real.length > 0,
-          detail: real.length > 0 ? `found: ${real.join(", ")}` : "no provider key set",
+          ok: true,
+          detail: real.length > 0 ? `found: ${real.join(", ")}` : "agent-sdk fallback, no API key",
         };
       },
       fix: (ctx) => effects.openEditor(ctx.envPath),
