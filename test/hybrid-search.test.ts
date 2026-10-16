@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { HybridSearch } from "../src/state/hybrid-search.js";
 import { SearchIndex } from "../src/state/search-index.js";
-import type { CompressedObservation, EmbeddingProvider } from "../src/types.js";
+import { VectorIndex } from "../src/state/vector-index.js";
+import { memoryToObservation } from "../src/state/memory-utils.js";
+import type { CompressedObservation, EmbeddingProvider, Memory } from "../src/types.js";
 
 function makeObs(
   overrides: Partial<CompressedObservation> = {},
@@ -20,6 +22,32 @@ function makeObs(
     importance: 7,
     ...overrides,
   };
+}
+
+function makeMemory(i: number): Memory {
+  const now = new Date().toISOString();
+  return {
+    id: `mem_${i}`,
+    createdAt: now,
+    updatedAt: now,
+    type: "fact",
+    title: `zephyrkey zephyrkey fact ${i}`,
+    content: `zephyrkey zephyrkey zephyrkey saved fact ${i}`,
+    concepts: [],
+    files: [],
+    sessionIds: [],
+    strength: 7,
+    version: 1,
+    isLatest: true,
+  };
+}
+
+function makePassingMention(i: number): CompressedObservation {
+  return makeObs({
+    id: `obs_${i}`,
+    sessionId: `ses_${i}`,
+    narrative: `long build log with lint output that mentions zephyrkey once ${i}`,
+  });
 }
 
 function mockKV() {
@@ -179,5 +207,86 @@ describe("HybridSearch", () => {
     expect(results[0].observation.id).toBe("mem_abc");
     expect(results[0].observation.narrative).toBe("Test memory for search");
     expect(results[0].observation.concepts).toEqual(["test", "search"]);
+  });
+
+  async function indexObs(obs: CompressedObservation) {
+    bm25.add(obs);
+    await kv.set(`mem:obs:${obs.sessionId}`, obs.id, obs);
+  }
+
+  it("ranks saved memories by score instead of capping them at three under their shared session", async () => {
+    for (let i = 1; i <= 6; i++) {
+      const memory = makeMemory(i);
+      bm25.add(memoryToObservation(memory), "memory");
+      await kv.set("mem:memories", memory.id, memory);
+    }
+    for (let i = 1; i <= 3; i++) await indexObs(makePassingMention(i));
+
+    const raw = bm25.search("zephyrkey", 50);
+    const scoresOf = (layer: string) =>
+      raw.filter((r) => bm25.layerOf(r.obsId) === layer).map((r) => r.score);
+    expect(scoresOf("observation")).toHaveLength(3);
+    expect(Math.min(...scoresOf("memory"))).toBeGreaterThan(Math.max(...scoresOf("observation")));
+
+    const hybrid = new HybridSearch(bm25, null, null, kv as never);
+    const results = await hybrid.search("zephyrkey", 5);
+    expect(results.map((r) => r.layer)).toEqual(Array(5).fill("memory"));
+  });
+
+  it("keeps a memory that carries a real session id out of that session's cap", async () => {
+    for (let i = 1; i <= 3; i++) {
+      await indexObs(makeObs({
+        id: `obs_${i}`,
+        sessionId: "ses_x",
+        title: `zephyrkey zephyrkey zephyrkey ${i}`,
+        narrative: `zephyrkey zephyrkey zephyrkey zephyrkey zephyrkey ${i}`,
+      }));
+    }
+    const memory = { ...makeMemory(1), sessionIds: ["ses_x"], title: "consolidated fact", content: "zephyrkey zephyrkey consolidated fact" };
+    bm25.add(memoryToObservation(memory), "memory");
+    await kv.set("mem:memories", memory.id, memory);
+    for (let i = 4; i <= 6; i++) await indexObs(makePassingMention(i));
+
+    const layers = ["observation", "observation", "observation", "memory", "observation"];
+    expect(bm25.search("zephyrkey", 5).map((r) => bm25.layerOf(r.obsId))).toEqual(layers);
+
+    const hybrid = new HybridSearch(bm25, null, null, kv as never);
+    const results = await hybrid.search("zephyrkey", 5);
+    expect(results.map((r) => r.layer)).toEqual(layers);
+  });
+
+  it("does not cap saved memories that only the vector index holds", async () => {
+    const vector = new VectorIndex();
+    for (let i = 1; i <= 6; i++) {
+      const memory = makeMemory(i);
+      vector.add(memory.id, "memory", new Float32Array([1, 0.001 * i]));
+      await kv.set("mem:memories", memory.id, memory);
+    }
+    for (let i = 1; i <= 3; i++) {
+      const obs = makePassingMention(i);
+      vector.add(obs.id, obs.sessionId, new Float32Array([0.5, 0.5]));
+      await kv.set(`mem:obs:${obs.sessionId}`, obs.id, obs);
+    }
+    const embedding: EmbeddingProvider = { name: "fixed", dimensions: 2, embed: async () => new Float32Array([1, 0]), embedBatch: async () => [] };
+
+    const hybrid = new HybridSearch(bm25, vector, embedding, kv as never, 0.4, 0.6, 0);
+    const results = await hybrid.search("zephyrkey", 5);
+    expect(results.map((r) => r.layer)).toEqual(Array(5).fill("memory"));
+  });
+
+  it("still caps observations from one session at three", async () => {
+    for (let i = 1; i <= 4; i++) {
+      await indexObs(makeObs({
+        id: `obs_${i}`,
+        sessionId: "ses_big",
+        title: `zephyrkey zephyrkey ${i}`,
+        narrative: `zephyrkey zephyrkey zephyrkey ${i}`,
+      }));
+    }
+    for (let i = 5; i <= 7; i++) await indexObs(makePassingMention(i));
+
+    const hybrid = new HybridSearch(bm25, null, null, kv as never);
+    const results = await hybrid.search("zephyrkey", 5);
+    expect(results.filter((r) => r.sessionId === "ses_big")).toHaveLength(3);
   });
 });

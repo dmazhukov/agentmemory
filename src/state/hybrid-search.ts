@@ -1,5 +1,5 @@
 import { SearchIndex } from "./search-index.js";
-import type { SearchLayer } from "./search-layer.js";
+import { getSearchResultLayer, type SearchLayer } from "./search-layer.js";
 import { VectorIndex } from "./vector-index.js";
 import type {
   EmbeddingProvider,
@@ -307,10 +307,12 @@ export class HybridSearch {
     const sessionCounts = new Map<string, number>();
 
     for (const r of results) {
-      const count = sessionCounts.get(r.sessionId) || 0;
+      const layer = this.bm25.layerOf(r.obsId) ?? getSearchResultLayer(r.obsId, r.sessionId);
+      const group = layer === "memory" ? `memory:${r.obsId}` : r.sessionId;
+      const count = sessionCounts.get(group) || 0;
       if (count >= maxPerSession) continue;
       selected.push(r);
-      sessionCounts.set(r.sessionId, count + 1);
+      sessionCounts.set(group, count + 1);
       if (selected.length >= limit) break;
     }
 
