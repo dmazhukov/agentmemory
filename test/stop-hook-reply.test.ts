@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mockKV, mockSdk } from "./helpers/mocks.js";
+import { drainInProgress } from "../src/capture/spool.js";
 import { KV } from "../src/state/schema.js";
 import type { CompressedObservation, MemoryProvider, Session } from "../src/types.js";
 
@@ -32,6 +33,7 @@ const ROUTES: Record<string, string> = {
 
 let home: string;
 const daemons: Daemon[] = [];
+const hookPorts = new Set<number>();
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -139,6 +141,7 @@ function runHook(
   env: Record<string, string> = {},
 ): Promise<{ code: number | null; startedAt: number; ms: number }> {
   const startedAt = Date.now();
+  hookPorts.add(port);
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [HOOK], {
       env: {
@@ -205,6 +208,7 @@ async function seedSession(daemon: Daemon): Promise<void> {
 describe("packaged Stop hook reply capture", () => {
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), "am-stop-reply-"));
+    hookPorts.clear();
     vi.stubEnv("AGENTMEMORY_AUTO_COMPRESS", "false");
     vi.stubEnv("AGENTMEMORY_AGENT_SCOPE", "shared");
     vi.stubEnv("AGENTMEMORY_FINALIZE_IDLE_MS", "120000");
@@ -213,7 +217,10 @@ describe("packaged Stop hook reply capture", () => {
   afterEach(async () => {
     await Promise.all(daemons.splice(0).map((d) => d.close()));
     vi.unstubAllEnvs();
-    rmSync(home, { recursive: true, force: true });
+    const spool = join(home, "spool");
+    const draining = () => [...hookPorts].some((p) => drainInProgress(`http://127.0.0.1:${p}`, spool));
+    expect(await waitFor(() => !draining(), 5000)).toBe(true);
+    rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   });
 
   it("stores a delayed reply before an immediate finalization summarizes the session", async () => {
