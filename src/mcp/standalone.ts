@@ -333,6 +333,16 @@ async function handleProxy(
   }
 }
 
+function localFallbackNotice(persisted: boolean) {
+  const store = persisted
+    ? "the local fallback file, which the server does not read"
+    : "this process's in-memory fallback store, which is lost when the process exits";
+  return {
+    storage: "local",
+    warning: `agentmemory server at ${displayAgentmemoryUrl()} did not confirm this call, so it ran against ${store}.`,
+  };
+}
+
 async function handleLocal(
   v: Validated,
   kvInstance: InMemoryKV,
@@ -357,8 +367,8 @@ async function handleLocal(
         ...(v.project !== undefined && { project: v.project }),
         ...((v.agentId ?? getAgentId()) !== undefined && { agentId: v.agentId ?? getAgentId() }),
       });
-      kvInstance.persist();
-      return textResponse({ saved: id });
+      const persisted = kvInstance.persist();
+      return textResponse({ saved: id, ...localFallbackNotice(persisted) });
     }
 
     case "memory_recall":
@@ -435,11 +445,12 @@ async function handleLocal(
           deleted++;
         }
       }
-      kvInstance.persist();
+      const persisted = kvInstance.persist();
       return textResponse({
         deleted,
         requested: (v.memoryIds || []).length,
         reason: v.reason,
+        ...localFallbackNotice(persisted),
       });
     }
 
