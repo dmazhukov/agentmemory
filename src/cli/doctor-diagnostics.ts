@@ -170,7 +170,8 @@ export function buildDiagnostics(effects: DoctorEffects): Diagnostic[] {
       fixPreview: "Copy .env.example into ~/.agentmemory/.env (your keys file).",
       moreInfo:
         "agentmemory reads provider API keys (Anthropic, OpenAI, Gemini, …) from ~/.agentmemory/.env. " +
-        "Without this file the daemon falls back to BM25-only search and no LLM-backed enrichment runs.",
+        "Without this file, and without a provider key exported in the environment, the daemon " +
+        "falls back to BM25-only search and no LLM-backed enrichment runs.",
       check: async () => ({
         ok: effects.envFileExists(),
         detail: effects.envFileExists() ? undefined : "no env file",
@@ -183,14 +184,17 @@ export function buildDiagnostics(effects: DoctorEffects): Diagnostic[] {
       fixPreview: "Open ~/.agentmemory/.env in $EDITOR and paste your key, then re-check.",
       moreInfo:
         "Set at least one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, " +
-        "OPENROUTER_API_KEY, MINIMAX_API_KEY. Placeholder values count as missing. " +
+        "GOOGLE_API_KEY, OPENROUTER_API_KEY, MINIMAX_API_KEY. Placeholder values count as missing. " +
         "OPENAI_API_KEY counts only while OPENAI_API_KEY_FOR_LLM is not false, and " +
         "AGENTMEMORY_ALLOW_AGENT_SDK=true needs no key. A value exported in the environment " +
         "wins over the file, but only for a daemon started from that environment, and " +
         "counts even when the file is absent.",
       check: async () => {
         const file = effects.readEnvFile();
-        const env = { ...file, ...effects.processEnv() } as Record<string, string>;
+        const env: Record<string, string> = { ...file };
+        for (const [k, v] of Object.entries(effects.processEnv())) {
+          if (v !== undefined) env[k] = v;
+        }
         for (const k of placeholderProviderKeys(env)) delete env[k];
         if (detectLlmProviderKind(env) !== "llm") {
           return {
@@ -207,11 +211,12 @@ export function buildDiagnostics(effects: DoctorEffects): Diagnostic[] {
               OPENAI_API_KEY_FOR_LLM: env.OPENAI_API_KEY_FOR_LLM,
             }) === "llm",
         );
-        const named = real.map((k) => (file[k] === env[k] ? k : `${k} (environment)`));
-        return {
-          ok: true,
-          detail: named.length > 0 ? `found: ${named.join(", ")}` : "agent-sdk fallback, no API key",
-        };
+        const fromEnv = real.filter((k) => file[k] !== env[k]);
+        const named = real.map((k) => (fromEnv.includes(k) ? `${k} (environment)` : k));
+        if (named.length === 0) return { ok: true, detail: "agent-sdk fallback, no API key" };
+        const caveat =
+          fromEnv.length > 0 ? "; a daemon started elsewhere will not see it" : "";
+        return { ok: true, detail: `found: ${named.join(", ")}${caveat}` };
       },
       fix: (ctx) => effects.openEditor(ctx.envPath),
     },

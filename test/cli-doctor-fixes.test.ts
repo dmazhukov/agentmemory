@@ -184,11 +184,42 @@ describe("doctor v2 diagnostic catalog", () => {
       ).toBe(false);
     });
 
-    it("names a key that only the environment provides", async () => {
+    it("names a key that only the environment provides, and says a daemon elsewhere misses it", async () => {
       expect(await statusFor({}, { ANTHROPIC_API_KEY: "sk-ant-real-key-value" })).toEqual({
         ok: true,
-        detail: "found: ANTHROPIC_API_KEY (environment)",
+        detail:
+          "found: ANTHROPIC_API_KEY (environment); a daemon started elsewhere will not see it",
       });
+    });
+
+    it("marks a key the environment overrides, not just one the file lacks", async () => {
+      expect(
+        await statusFor(
+          { ANTHROPIC_API_KEY: "sk-ant-key-from-file" },
+          { ANTHROPIC_API_KEY: "sk-ant-key-from-shell" },
+        ),
+      ).toEqual({
+        ok: true,
+        detail:
+          "found: ANTHROPIC_API_KEY (environment); a daemon started elsewhere will not see it",
+      });
+    });
+
+    it("leaves a file key unmarked when only an unrelated flag comes from the environment", async () => {
+      const status = await statusFor(
+        { OPENAI_API_KEY: "sk-real-openai-key", OPENAI_API_KEY_FOR_LLM: "false" },
+        { OPENAI_API_KEY_FOR_LLM: "true" },
+      );
+      expect(status.ok).toBe(true);
+      expect(status.detail).toBe("found: OPENAI_API_KEY");
+    });
+
+    it("ignores an undefined environment value instead of blanking the file key", async () => {
+      expect(
+        await statusFor({ ANTHROPIC_API_KEY: "sk-ant-real-key-value" }, {
+          ANTHROPIC_API_KEY: undefined,
+        }),
+      ).toEqual({ ok: true, detail: "found: ANTHROPIC_API_KEY" });
     });
 
     it("counts an exported key when no env file exists, as the daemon does", async () => {
@@ -202,7 +233,8 @@ describe("doctor v2 diagnostic catalog", () => {
       const check = diagnostics.find((d) => d.id === "no-llm-provider-key")!;
       expect(await check.check(stubCtx())).toEqual({
         ok: true,
-        detail: "found: ANTHROPIC_API_KEY (environment)",
+        detail:
+          "found: ANTHROPIC_API_KEY (environment); a daemon started elsewhere will not see it",
       });
     });
 
@@ -218,6 +250,16 @@ describe("doctor v2 diagnostic catalog", () => {
       const status = await check.check(stubCtx());
       expect(status.ok).toBe(false);
       expect(status.detail).toContain("env-missing");
+      expect(await statusFor({}, {})).toEqual({ ok: false, detail: "no provider key set" });
+    });
+
+    it("keeps the agent-sdk label when the only key is reserved for embeddings", async () => {
+      expect(
+        await statusFor(
+          { OPENAI_API_KEY: "sk-real-openai-key", OPENAI_API_KEY_FOR_LLM: "false" },
+          { AGENTMEMORY_ALLOW_AGENT_SDK: "true" },
+        ),
+      ).toEqual({ ok: true, detail: "agent-sdk fallback, no API key" });
     });
 
     it("treats a placeholder exported in the environment as missing, unlike the daemon", async () => {
