@@ -186,16 +186,19 @@ export function buildDiagnostics(effects: DoctorEffects): Diagnostic[] {
         "OPENROUTER_API_KEY, MINIMAX_API_KEY. Placeholder values count as missing. " +
         "OPENAI_API_KEY counts only while OPENAI_API_KEY_FOR_LLM is not false, and " +
         "AGENTMEMORY_ALLOW_AGENT_SDK=true needs no key. A value exported in the environment " +
-        "wins over the file, but only for a daemon started from that environment.",
+        "wins over the file, but only for a daemon started from that environment, and " +
+        "counts even when the file is absent.",
       check: async () => {
-        if (!effects.envFileExists()) {
-          return { ok: false, detail: "env file missing (run env-missing fix first)" };
-        }
         const file = effects.readEnvFile();
         const env = { ...file, ...effects.processEnv() } as Record<string, string>;
         for (const k of placeholderProviderKeys(env)) delete env[k];
         if (detectLlmProviderKind(env) !== "llm") {
-          return { ok: false, detail: "no provider key set" };
+          return {
+            ok: false,
+            detail: effects.envFileExists()
+              ? "no provider key set"
+              : "no provider key set (run env-missing fix first)",
+          };
         }
         const real = realProviderKeys(env).filter(
           (k) =>

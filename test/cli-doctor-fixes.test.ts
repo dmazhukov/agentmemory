@@ -191,6 +191,35 @@ describe("doctor v2 diagnostic catalog", () => {
       });
     });
 
+    it("counts an exported key when no env file exists, as the daemon does", async () => {
+      const diagnostics = buildDiagnostics(
+        stubEffects({
+          envFileExists: () => false,
+          readEnvFile: () => ({}),
+          processEnv: () => ({ ANTHROPIC_API_KEY: "sk-ant-real-key-value" }),
+        }),
+      );
+      const check = diagnostics.find((d) => d.id === "no-llm-provider-key")!;
+      expect(await check.check(stubCtx())).toEqual({
+        ok: true,
+        detail: "found: ANTHROPIC_API_KEY (environment)",
+      });
+    });
+
+    it("points at the env-missing fix when neither the file nor the environment has a key", async () => {
+      const diagnostics = buildDiagnostics(
+        stubEffects({
+          envFileExists: () => false,
+          readEnvFile: () => ({}),
+          processEnv: () => ({}),
+        }),
+      );
+      const check = diagnostics.find((d) => d.id === "no-llm-provider-key")!;
+      const status = await check.check(stubCtx());
+      expect(status.ok).toBe(false);
+      expect(status.detail).toContain("env-missing");
+    });
+
     it("treats a placeholder exported in the environment as missing, unlike the daemon", async () => {
       expect(
         (
