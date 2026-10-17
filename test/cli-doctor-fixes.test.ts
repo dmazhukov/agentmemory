@@ -33,6 +33,7 @@ function stubEffects(overrides: Partial<DoctorEffects> = {}): DoctorEffects {
   return {
     envFileExists: () => true,
     readEnvFile: () => ({ ANTHROPIC_API_KEY: "sk-ant-real-key-value" }),
+    processEnv: () => ({}),
     pidfileExists: () => false,
     pidfilePidIsAlive: () => null,
     findIiiBinary: () => "/Users/test/.local/bin/iii",
@@ -156,6 +157,50 @@ describe("doctor v2 diagnostic catalog", () => {
         OPENAI_API_KEY_FOR_LLM: "false",
       }),
     ).toEqual({ ok: true, detail: "found: ANTHROPIC_API_KEY" });
+  });
+
+  describe("no-llm-provider-key with a process environment", () => {
+    const statusFor = async (
+      file: Record<string, string>,
+      processEnv: Record<string, string | undefined>,
+    ) => {
+      const diagnostics = buildDiagnostics(
+        stubEffects({ readEnvFile: () => file, processEnv: () => processEnv }),
+      );
+      const check = diagnostics.find((d) => d.id === "no-llm-provider-key")!;
+      return check.check(stubCtx());
+    };
+
+    it("lets the environment override the same key in the file, as the daemon does", async () => {
+      const reservedInFile = {
+        OPENAI_API_KEY: "sk-real-openai-key",
+        OPENAI_API_KEY_FOR_LLM: "false",
+      };
+      expect((await statusFor(reservedInFile, {})).ok).toBe(false);
+      expect((await statusFor(reservedInFile, { OPENAI_API_KEY_FOR_LLM: "true" })).ok).toBe(true);
+      expect(
+        (await statusFor({ ANTHROPIC_API_KEY: "sk-ant-real-key-value" }, { ANTHROPIC_API_KEY: "" }))
+          .ok,
+      ).toBe(false);
+    });
+
+    it("names a key that only the environment provides", async () => {
+      expect(await statusFor({}, { ANTHROPIC_API_KEY: "sk-ant-real-key-value" })).toEqual({
+        ok: true,
+        detail: "found: ANTHROPIC_API_KEY (environment)",
+      });
+    });
+
+    it("treats a placeholder exported in the environment as missing, unlike the daemon", async () => {
+      expect(
+        (
+          await statusFor(
+            { ANTHROPIC_API_KEY: "sk-ant-real-key-value" },
+            { ANTHROPIC_API_KEY: "your-key-here" },
+          )
+        ).ok,
+      ).toBe(false);
+    });
   });
 
   it("engine-version-mismatch fails when iii reports the wrong version", async () => {

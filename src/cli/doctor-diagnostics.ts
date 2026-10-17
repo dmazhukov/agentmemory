@@ -134,6 +134,8 @@ export type DoctorEffects = {
   envFileExists: () => boolean;
   /** Read ~/.agentmemory/.env and return parsed key=value pairs. */
   readEnvFile: () => Record<string, string>;
+  /** Process environment, which takes precedence over the file as in getMergedEnv(). */
+  processEnv: () => Record<string, string | undefined>;
   /** Is the iii engine PID in the pidfile still alive? */
   pidfilePidIsAlive: () => boolean | null;
   /** Does the pidfile exist on disk? */
@@ -177,18 +179,20 @@ export function buildDiagnostics(effects: DoctorEffects): Diagnostic[] {
     },
     {
       id: "no-llm-provider-key",
-      message: "No LLM provider API key found in ~/.agentmemory/.env.",
+      message: "No LLM provider API key found in ~/.agentmemory/.env or the environment.",
       fixPreview: "Open ~/.agentmemory/.env in $EDITOR and paste your key, then re-check.",
       moreInfo:
         "Set at least one of: ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, " +
-        "OPENROUTER_API_KEY, MINIMAX_API_KEY. The daemon picks the first that resolves " +
-        "to a real (non-placeholder) value at startup. OPENAI_API_KEY counts only while " +
-        "OPENAI_API_KEY_FOR_LLM is not false, and AGENTMEMORY_ALLOW_AGENT_SDK=true needs no key.",
+        "OPENROUTER_API_KEY, MINIMAX_API_KEY. Placeholder values count as missing. " +
+        "OPENAI_API_KEY counts only while OPENAI_API_KEY_FOR_LLM is not false, and " +
+        "AGENTMEMORY_ALLOW_AGENT_SDK=true needs no key. A value exported in the environment " +
+        "wins over the file, but only for a daemon started from that environment.",
       check: async () => {
         if (!effects.envFileExists()) {
           return { ok: false, detail: "env file missing (run env-missing fix first)" };
         }
-        const env = { ...effects.readEnvFile() };
+        const file = effects.readEnvFile();
+        const env = { ...file, ...effects.processEnv() } as Record<string, string>;
         for (const k of placeholderProviderKeys(env)) delete env[k];
         if (detectLlmProviderKind(env) !== "llm") {
           return { ok: false, detail: "no provider key set" };
@@ -200,9 +204,10 @@ export function buildDiagnostics(effects: DoctorEffects): Diagnostic[] {
               OPENAI_API_KEY_FOR_LLM: env.OPENAI_API_KEY_FOR_LLM,
             }) === "llm",
         );
+        const named = real.map((k) => (file[k] === env[k] ? k : `${k} (environment)`));
         return {
           ok: true,
-          detail: real.length > 0 ? `found: ${real.join(", ")}` : "agent-sdk fallback, no API key",
+          detail: named.length > 0 ? `found: ${named.join(", ")}` : "agent-sdk fallback, no API key",
         };
       },
       fix: (ctx) => effects.openEditor(ctx.envPath),
