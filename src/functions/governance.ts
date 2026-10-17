@@ -16,12 +16,32 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+const PREFIXED_SCOPES: ReadonlyArray<readonly [string, string]> = [
+  ["ins_", KV.insights],
+  ["lsn_", KV.lessons],
+  ["act_", KV.actions],
+  ["crys_", KV.crystals],
+  ["ckpt_", KV.checkpoints],
+];
+
+async function deletePrefixedRecord(
+  kv: StateKV,
+  id: string,
+): Promise<"deleted" | "missing"> {
+  const scope = PREFIXED_SCOPES.find(([prefix]) => id.startsWith(prefix))?.[1];
+  if (!scope || !(await kv.get(scope, id))) return "missing";
+  await kv.delete(scope, id);
+  getSearchIndex().remove(id);
+  vectorIndexRemove(id);
+  return "deleted";
+}
+
 async function deleteMemoryRecord(
   kv: StateKV,
   id: string,
 ): Promise<"deleted" | "missing"> {
   const mem = await kv.get<Memory>(KV.memories, id);
-  if (!mem) return "missing";
+  if (!mem) return typeof id === "string" ? deletePrefixedRecord(kv, id) : "missing";
   await kv.delete(KV.memories, id);
   await deleteAccessLog(kv, id);
   getSearchIndex().remove(id);
