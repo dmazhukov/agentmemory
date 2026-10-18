@@ -69,7 +69,8 @@ export function configStartsAgentmemoryWorker(raw: string, workerEntry: string, 
       ? tokens[1]
       : tokens.length === 4 && tokens[1] === "--import" && tokens[2] === "tsx" ? tokens[3] : undefined;
     if (entry === workerEntry.replaceAll("\\", "/")) return true;
-    if (engineCwd !== undefined && (entry === "dist/index.mjs" || entry === "./dist/index.mjs" || entry === "src/index.ts" || entry === "./src/index.ts")) {
+    if (entry === "dist/index.mjs" || entry === "./dist/index.mjs" || entry === "src/index.ts" || entry === "./src/index.ts") {
+      if (engineCwd === undefined) return true;
       try {
         if (statSync(join(engineCwd, entry)).isFile()) return true;
       } catch {}

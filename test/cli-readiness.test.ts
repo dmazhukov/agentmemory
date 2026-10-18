@@ -117,7 +117,6 @@ describe("configured worker ownership", () => {
   });
   it.each(["node dist/index.mjs", "node ./dist/index.mjs", "node --import tsx src/index.ts", "tsx ./src/index.ts"])("does not claim a relative worker entry missing from the engine working directory: %s", (command) => {
     expect(configStartsAgentmemoryWorker(config(command), "/package/dist/index.mjs", emptyCwd)).toBe(false);
-    expect(configStartsAgentmemoryWorker(config(command), "/package/dist/index.mjs")).toBe(false);
   });
   it.each(["node dist/index.mjs", "node ./dist/index.mjs", "node --import tsx src/index.ts", "tsx ./src/index.ts"])("does not claim a relative worker entry that is a directory in the engine working directory: %s", (command) => {
     expect(configStartsAgentmemoryWorker(config(command), "/package/dist/index.mjs", dirEntryCwd)).toBe(false);
@@ -143,6 +142,12 @@ describe("configured worker ownership", () => {
   });
   it("recognizes the absolute worker entry without an engine working directory", () => {
     expect(configStartsAgentmemoryWorker(config("/opt/node /package/dist/index.mjs"), "/package/dist/index.mjs")).toBe(true);
+  });
+  it.each(["node dist/index.mjs", "node ./dist/index.mjs", "node --import tsx src/index.ts", "tsx ./src/index.ts"])("keeps recognizing a relative worker entry when the engine working directory is unknown: %s", (command) => {
+    expect(configStartsAgentmemoryWorker(config(command), "/package/dist/index.mjs")).toBe(true);
+  });
+  it.each(["node other.mjs", "sh -c 'node dist/index.mjs'"])("does not claim an unrelated entry when the engine working directory is unknown: %s", (command) => {
+    expect(configStartsAgentmemoryWorker(config(command), "/package/dist/index.mjs")).toBe(false);
   });
   it("ignores comments, other workers and sibling configuration lists", () => {
     const raw = `# - name: iii-exec\n#   exec:\n#     - node dist/index.mjs\n  - name: iii-state\n    config:\n      exec:\n        - node dist/index.mjs\n  - name: iii-exec\n    config:\n      exec:\n        - node other.mjs\n      watch:\n        - node dist/index.mjs\n`;
