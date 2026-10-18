@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -79,6 +79,7 @@ describe("configured worker ownership", () => {
   let emptyCwd: string;
   let distOnlyCwd: string;
   let dirEntryCwd: string;
+  let linkCwd: string;
   beforeAll(() => {
     engineCwd = mkdtempSync(join(tmpdir(), "am-engine-cwd-"));
     emptyCwd = mkdtempSync(join(tmpdir(), "am-engine-cwd-empty-"));
@@ -90,6 +91,12 @@ describe("configured worker ownership", () => {
     dirEntryCwd = mkdtempSync(join(tmpdir(), "am-engine-cwd-dir-"));
     mkdirSync(join(dirEntryCwd, "dist/index.mjs"), { recursive: true });
     mkdirSync(join(dirEntryCwd, "src/index.ts"), { recursive: true });
+    linkCwd = mkdtempSync(join(tmpdir(), "am-engine-cwd-link-"));
+    mkdirSync(join(linkCwd, "dist"));
+    mkdirSync(join(linkCwd, "src"));
+    writeFileSync(join(linkCwd, "target.mjs"), "");
+    symlinkSync(join(linkCwd, "target.mjs"), join(linkCwd, "dist/index.mjs"));
+    symlinkSync(join(linkCwd, "src"), join(linkCwd, "src/index.ts"));
     for (const entry of ["dist/index.mjs", "src/index.ts", "other.mjs", "delayed-wrapper.mjs"]) {
       mkdirSync(dirname(join(engineCwd, entry)), { recursive: true });
       writeFileSync(join(engineCwd, entry), "");
@@ -100,6 +107,7 @@ describe("configured worker ownership", () => {
     rmSync(emptyCwd, { recursive: true, force: true });
     rmSync(distOnlyCwd, { recursive: true, force: true });
     rmSync(dirEntryCwd, { recursive: true, force: true });
+    rmSync(linkCwd, { recursive: true, force: true });
   });
   it.each(["node dist/index.mjs", "node ./dist/index.mjs", "node --import tsx src/index.ts", "tsx ./src/index.ts", '"node dist/index.mjs"', "node dist/index.mjs # worker", '"node dist/index.mjs" # worker', "node --max-old-space-size=8192 dist/index.mjs", '\'/opt/node /package/dist/index.mjs\''])("recognizes a direct worker command: %s", (command) => {
     expect(configStartsAgentmemoryWorker(config(command), "/package/dist/index.mjs", engineCwd)).toBe(true);
@@ -113,6 +121,22 @@ describe("configured worker ownership", () => {
   });
   it.each(["node dist/index.mjs", "node ./dist/index.mjs", "node --import tsx src/index.ts", "tsx ./src/index.ts"])("does not claim a relative worker entry that is a directory in the engine working directory: %s", (command) => {
     expect(configStartsAgentmemoryWorker(config(command), "/package/dist/index.mjs", dirEntryCwd)).toBe(false);
+  });
+  it("follows a symlinked relative worker entry to what it points at", () => {
+    expect(configStartsAgentmemoryWorker(config("node dist/index.mjs"), "/package/dist/index.mjs", linkCwd)).toBe(true);
+    expect(configStartsAgentmemoryWorker(config("tsx ./src/index.ts"), "/package/dist/index.mjs", linkCwd)).toBe(false);
+  });
+  it("treats an unreadable relative worker entry as missing and keeps reading the exec list", () => {
+    const raw = `workers:\n  - name: iii-exec\n    config:\n      exec:\n        - node dist/index.mjs\n        - /opt/node /package/dist/index.mjs\n`;
+    const loopCwd = mkdtempSync(join(tmpdir(), "am-engine-cwd-loop-"));
+    try {
+      mkdirSync(join(loopCwd, "dist"));
+      symlinkSync(join(loopCwd, "dist/index.mjs"), join(loopCwd, "dist/index.mjs"));
+      expect(configStartsAgentmemoryWorker(raw, "/package/dist/index.mjs", loopCwd)).toBe(true);
+      expect(configStartsAgentmemoryWorker(config("node dist/index.mjs"), "/package/dist/index.mjs", loopCwd)).toBe(false);
+    } finally {
+      rmSync(loopCwd, { recursive: true, force: true });
+    }
   });
   it.each(["node --import tsx src/index.ts", "tsx ./src/index.ts"])("does not claim the source entry when only the built entry exists in the engine working directory: %s", (command) => {
     expect(configStartsAgentmemoryWorker(config(command), "/package/dist/index.mjs", distOnlyCwd)).toBe(false);
