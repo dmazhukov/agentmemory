@@ -78,6 +78,7 @@ describe("configured worker ownership", () => {
   let engineCwd: string;
   let emptyCwd: string;
   let distOnlyCwd: string;
+  let dirEntryCwd: string;
   beforeAll(() => {
     engineCwd = mkdtempSync(join(tmpdir(), "am-engine-cwd-"));
     emptyCwd = mkdtempSync(join(tmpdir(), "am-engine-cwd-empty-"));
@@ -86,6 +87,9 @@ describe("configured worker ownership", () => {
     distOnlyCwd = mkdtempSync(join(tmpdir(), "am-engine-cwd-dist-"));
     mkdirSync(join(distOnlyCwd, "dist"));
     writeFileSync(join(distOnlyCwd, "dist/index.mjs"), "");
+    dirEntryCwd = mkdtempSync(join(tmpdir(), "am-engine-cwd-dir-"));
+    mkdirSync(join(dirEntryCwd, "dist/index.mjs"), { recursive: true });
+    mkdirSync(join(dirEntryCwd, "src/index.ts"), { recursive: true });
     for (const entry of ["dist/index.mjs", "src/index.ts", "other.mjs", "delayed-wrapper.mjs"]) {
       mkdirSync(dirname(join(engineCwd, entry)), { recursive: true });
       writeFileSync(join(engineCwd, entry), "");
@@ -95,6 +99,7 @@ describe("configured worker ownership", () => {
     rmSync(engineCwd, { recursive: true, force: true });
     rmSync(emptyCwd, { recursive: true, force: true });
     rmSync(distOnlyCwd, { recursive: true, force: true });
+    rmSync(dirEntryCwd, { recursive: true, force: true });
   });
   it.each(["node dist/index.mjs", "node ./dist/index.mjs", "node --import tsx src/index.ts", "tsx ./src/index.ts", '"node dist/index.mjs"', "node dist/index.mjs # worker", '"node dist/index.mjs" # worker', "node --max-old-space-size=8192 dist/index.mjs", '\'/opt/node /package/dist/index.mjs\''])("recognizes a direct worker command: %s", (command) => {
     expect(configStartsAgentmemoryWorker(config(command), "/package/dist/index.mjs", engineCwd)).toBe(true);
@@ -105,6 +110,9 @@ describe("configured worker ownership", () => {
   it.each(["node dist/index.mjs", "node ./dist/index.mjs", "node --import tsx src/index.ts", "tsx ./src/index.ts"])("does not claim a relative worker entry missing from the engine working directory: %s", (command) => {
     expect(configStartsAgentmemoryWorker(config(command), "/package/dist/index.mjs", emptyCwd)).toBe(false);
     expect(configStartsAgentmemoryWorker(config(command), "/package/dist/index.mjs")).toBe(false);
+  });
+  it.each(["node dist/index.mjs", "node ./dist/index.mjs", "node --import tsx src/index.ts", "tsx ./src/index.ts"])("does not claim a relative worker entry that is a directory in the engine working directory: %s", (command) => {
+    expect(configStartsAgentmemoryWorker(config(command), "/package/dist/index.mjs", dirEntryCwd)).toBe(false);
   });
   it.each(["node --import tsx src/index.ts", "tsx ./src/index.ts"])("does not claim the source entry when only the built entry exists in the engine working directory: %s", (command) => {
     expect(configStartsAgentmemoryWorker(config(command), "/package/dist/index.mjs", distOnlyCwd)).toBe(false);

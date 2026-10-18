@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { statSync } from "node:fs";
 import { join } from "node:path";
 
 export const DEFAULT_ENGINE_TIMEOUT_MS = 120_000;
@@ -69,7 +69,7 @@ export function configStartsAgentmemoryWorker(raw: string, workerEntry: string, 
       ? tokens[1]
       : tokens.length === 4 && tokens[1] === "--import" && tokens[2] === "tsx" ? tokens[3] : undefined;
     if (entry === workerEntry.replaceAll("\\", "/")) return true;
-    if (engineCwd !== undefined && (entry === "dist/index.mjs" || entry === "./dist/index.mjs" || entry === "src/index.ts" || entry === "./src/index.ts") && existsSync(join(engineCwd, entry))) return true;
+    if (engineCwd !== undefined && (entry === "dist/index.mjs" || entry === "./dist/index.mjs" || entry === "src/index.ts" || entry === "./src/index.ts") && statSync(join(engineCwd, entry), { throwIfNoEntry: false })?.isFile()) return true;
   }
   return false;
 }
