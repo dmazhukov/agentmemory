@@ -134,7 +134,6 @@ export type DoctorEffects = {
   envFileExists: () => boolean;
   /** Read ~/.agentmemory/.env and return parsed key=value pairs. */
   readEnvFile: () => Record<string, string>;
-  /** Process environment, which takes precedence over the file as in getMergedEnv(). */
   processEnv: () => Record<string, string | undefined>;
   /** Is the iii engine PID in the pidfile still alive? */
   pidfilePidIsAlive: () => boolean | null;

@@ -87,8 +87,6 @@ function hasRealValue(v: string | undefined): v is string {
 // ignored by them. Copy the file's vars into process.env, but only when the
 // key is currently unset so a real process.env value still wins (this
 // preserves the {...fileEnv, ...process.env} precedence getMergedEnv uses).
-// Returns process.env from before the copy: the hydrated values go stale once
-// the file is edited, so a caller that re-reads the file merges over these.
 export function hydrateProcessEnvFromFile(): Record<string, string | undefined> {
   const beforeHydration = { ...process.env };
   for (const [k, v] of Object.entries(loadEnvFile())) {
