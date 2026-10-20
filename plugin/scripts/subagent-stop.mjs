@@ -2,7 +2,7 @@
 import { execSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
-import { captureObservation, isDrainChild, runDrainChild, withEventId } from "./_capture.mjs";
+import { captureObservation, isDrainChild, runDrainChild, stripPrivateData, withEventId } from "./_capture.mjs";
 //#region src/hooks/_project.ts
 function resolveProject(cwd) {
 	const explicit = process.env["AGENTMEMORY_PROJECT_NAME"];
@@ -64,7 +64,7 @@ async function main() {
 	const agentId = data.agent_id || data.agentId || data.agentName;
 	const agentType = data.agent_type || data.agentType || data.agentDisplayName || data.agentName;
 	const reply = data.last_assistant_message ?? data.response;
-	const lastMsg = typeof reply === "string" ? reply.slice(0, 4e3) : "";
+	const lastMsg = typeof reply === "string" ? stripPrivateData(reply).slice(0, 4e3) : "";
 	const cwd = hookCwd(data) || process.cwd();
 	const body = {
 		hookType: "subagent_stop",

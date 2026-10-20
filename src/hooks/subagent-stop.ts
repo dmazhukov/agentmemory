@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { resolveProject, hookCwd } from "./_project.js";
-import { captureObservation, isDrainChild, runDrainChild, withEventId } from "./_capture.js";
+import { captureObservation, isDrainChild, runDrainChild, stripPrivateData, withEventId } from "./_capture.js";
 
 function isSdkChildContext(payload: unknown): boolean {
   if (process.env["AGENTMEMORY_SDK_CHILD"] === "1") return true;
@@ -32,7 +32,7 @@ async function main() {
   const agentId = data.agent_id || data.agentId || data.agentName;
   const agentType = data.agent_type || data.agentType || data.agentDisplayName || data.agentName;
   const reply = data.last_assistant_message ?? data.response;
-  const lastMsg = typeof reply === "string" ? reply.slice(0, 4000) : "";
+  const lastMsg = typeof reply === "string" ? stripPrivateData(reply).slice(0, 4000) : "";
 
   const cwd = hookCwd(data) || process.cwd();
 
