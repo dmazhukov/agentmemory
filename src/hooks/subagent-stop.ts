@@ -29,12 +29,10 @@ async function main() {
   if (isSdkChildContext(data)) return;
 
   const sessionId = ((data.session_id || data.sessionId || data.conversation_id) as string) || "unknown";
-  const agentId = data.agent_id || data.agentName;
-  const agentType = data.agent_type || data.agentDisplayName || data.agentName;
-  const lastMsg =
-    typeof data.last_assistant_message === "string"
-      ? data.last_assistant_message.slice(0, 4000)
-      : "";
+  const agentId = data.agent_id || data.agentId || data.agentName;
+  const agentType = data.agent_type || data.agentType || data.agentDisplayName || data.agentName;
+  const reply = data.last_assistant_message ?? data.response;
+  const lastMsg = typeof reply === "string" ? reply.slice(0, 4000) : "";
 
   const cwd = hookCwd(data) || process.cwd();
 
@@ -55,7 +53,7 @@ async function main() {
       body,
       {},
       { ...body.data, stop_hook_active: data.stop_hook_active === true },
-      { stable: Boolean(data.agent_id) },
+      { stable: Boolean(data.agent_id || data.agentId) },
     ),
     OBSERVE_TIMEOUT_MS,
   );

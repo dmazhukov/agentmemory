@@ -389,6 +389,31 @@ describe("Copilot hook scripts", () => {
     });
   });
 
+  it("subagent-stop accepts Copilot camelCase subagent payload", async () => {
+    const payload = {
+      sessionId: "copilot-session",
+      cwd: "C:\\repo",
+      agentId: "agent-7f3",
+      agentType: "general-purpose",
+      agentName: "explore",
+      agentDisplayName: "Explore",
+      response: "Found 3 call sites",
+      stopReason: "end_turn",
+    };
+    const first = await runHook("scripts/subagent-stop.mjs", payload);
+    const again = await runHook("scripts/subagent-stop.mjs", payload);
+    const other = await runHook("scripts/subagent-stop.mjs", { ...payload, agentId: "agent-9c1" });
+
+    expect(first.requests[0]?.path).toBe("/agentmemory/observe");
+    expect(first.requests[0]?.body).toMatchObject({
+      hookType: "subagent_stop",
+      sessionId: "copilot-session",
+      data: { agent_id: "agent-7f3", agent_type: "general-purpose", last_message: "Found 3 call sites" },
+    });
+    expect(again.requests[0]?.body.eventId).toBe(first.requests[0]?.body.eventId);
+    expect(other.requests[0]?.body.eventId).not.toBe(first.requests[0]?.body.eventId);
+  });
+
   it("notification accepts Copilot camelCase notificationType", async () => {
     const result = await runHook("scripts/notification.mjs", {
       sessionId: "copilot-session",
