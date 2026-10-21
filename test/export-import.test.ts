@@ -332,6 +332,10 @@ describe("Export/Import Functions", () => {
     { section: "lessons", shape: "an object", value: { les_1: { id: "les_1" } }, error: "lessons must be an array" },
     { section: "profiles", shape: "a string", value: "ab", error: "profiles must be an array" },
     { section: "accessLogs", shape: "a string", value: "oops", error: "accessLogs must be an array" },
+    { section: "lessons", shape: "null", value: null, error: "lessons must be an array" },
+    { section: "profiles", shape: "null", value: null, error: "profiles must be an array" },
+    { section: "accessLogs", shape: "null", value: null, error: "accessLogs must be an array" },
+    { section: "graphNodes", shape: "null", value: null, error: "graphNodes must be an array" },
     {
       section: "accessLogs",
       shape: "over the cap",

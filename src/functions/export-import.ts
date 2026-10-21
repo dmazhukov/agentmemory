@@ -421,7 +421,7 @@ export function registerExportImportFunction(sdk: IIIClient, state: StateKV): vo
       const rowKeys: Record<string, string> = { summaries: "sessionId", profiles: "project", accessLogs: "memoryId" };
       for (const section of ["sessions", "memories", "summaries", "profiles", ...EXPORT_COLLECTIONS.map(([field]) => field)] as const) {
         const rows = importData[section];
-        if (rows != null && !Array.isArray(rows)) {
+        if (rows !== undefined && !Array.isArray(rows)) {
           return { success: false, error: `${section} must be an array` };
         }
         const key = rowKeys[section] ?? "id";
