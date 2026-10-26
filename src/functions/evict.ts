@@ -15,6 +15,7 @@ import { unindexObservationSession } from "../state/obs-index.js";
 import { isConsolidationEnabled } from "../config.js";
 import { recordAudit } from "./audit.js";
 import { deleteAccessLog } from "./access-tracker.js";
+import { deleteFacetsForTargets } from "./facets.js";
 import { getSearchIndex, vectorIndexRemove, flushIndexSave } from "./search.js";
 import { logger } from "../logger.js";
 
@@ -333,74 +334,81 @@ export function registerEvictFunction(sdk: IIIClient, kv: StateKV): void {
 
       const memories = await kv.list<Memory>(KV.memories).catch(() => []);
       const evictedMemIds = new Set<string>();
-      for (const mem of memories) {
-        if (mem.forgetAfter) {
-          const expiry = new Date(mem.forgetAfter).getTime();
-          if (now > expiry) {
-            if (dryRun) {
-              stats.expiredMemories++;
-              evictedMemIds.add(mem.id);
-            } else {
-              try {
-                await kv.delete(KV.memories, mem.id);
+      const deletedMemIds = new Set<string>();
+      try {
+        for (const mem of memories) {
+          if (mem.forgetAfter) {
+            const expiry = new Date(mem.forgetAfter).getTime();
+            if (now > expiry) {
+              if (dryRun) {
                 stats.expiredMemories++;
                 evictedMemIds.add(mem.id);
-              } catch (err) {
-                logger.warn("Eviction delete failed", {
+              } else {
+                try {
+                  await kv.delete(KV.memories, mem.id);
+                  deletedMemIds.add(mem.id);
+                  stats.expiredMemories++;
+                  evictedMemIds.add(mem.id);
+                } catch (err) {
+                  logger.warn("Eviction delete failed", {
+                    resource: "memory",
+                    id: mem.id,
+                    reason: "expired_memory",
+                    error: err instanceof Error ? err.message : String(err),
+                  });
+                  continue;
+                }
+                if (mem.imageRef) {
+                  await decrementImageRef(kv, sdk, mem.imageRef);
+                }
+                await recordAudit(kv, "delete", "mem::evict", [mem.id], {
                   resource: "memory",
-                  id: mem.id,
                   reason: "expired_memory",
-                  error: err instanceof Error ? err.message : String(err),
+                  dryRun,
                 });
-                continue;
+                await deleteAccessLog(kv, mem.id);
               }
-              if (mem.imageRef) {
-                await decrementImageRef(kv, sdk, mem.imageRef);
-              }
-              await recordAudit(kv, "delete", "mem::evict", [mem.id], {
-                resource: "memory",
-                reason: "expired_memory",
-                dryRun,
-              });
-              await deleteAccessLog(kv, mem.id);
             }
           }
-        }
 
-        if (
-          !evictedMemIds.has(mem.id) &&
-          mem.isLatest === false &&
-          mem.createdAt
-        ) {
-          const age = now - new Date(mem.createdAt).getTime();
-          if (age > cfg.lowImportanceMaxDays * MS_PER_DAY) {
-            if (dryRun) {
-              stats.nonLatestMemories++;
-            } else {
-              try {
-                await kv.delete(KV.memories, mem.id);
+          if (
+            !evictedMemIds.has(mem.id) &&
+            mem.isLatest === false &&
+            mem.createdAt
+          ) {
+            const age = now - new Date(mem.createdAt).getTime();
+            if (age > cfg.lowImportanceMaxDays * MS_PER_DAY) {
+              if (dryRun) {
                 stats.nonLatestMemories++;
-              } catch (err) {
-                logger.warn("Eviction delete failed", {
+              } else {
+                try {
+                  await kv.delete(KV.memories, mem.id);
+                  deletedMemIds.add(mem.id);
+                  stats.nonLatestMemories++;
+                } catch (err) {
+                  logger.warn("Eviction delete failed", {
+                    resource: "memory",
+                    id: mem.id,
+                    reason: "old_non_latest_memory",
+                    error: err instanceof Error ? err.message : String(err),
+                  });
+                  continue;
+                }
+                if (mem.imageRef) {
+                  await decrementImageRef(kv, sdk, mem.imageRef);
+                }
+                await recordAudit(kv, "delete", "mem::evict", [mem.id], {
                   resource: "memory",
-                  id: mem.id,
                   reason: "old_non_latest_memory",
-                  error: err instanceof Error ? err.message : String(err),
+                  dryRun,
                 });
-                continue;
+                await deleteAccessLog(kv, mem.id);
               }
-              if (mem.imageRef) {
-                await decrementImageRef(kv, sdk, mem.imageRef);
-              }
-              await recordAudit(kv, "delete", "mem::evict", [mem.id], {
-                resource: "memory",
-                reason: "old_non_latest_memory",
-                dryRun,
-              });
-              await deleteAccessLog(kv, mem.id);
             }
           }
         }
+      } finally {
+        await deleteFacetsForTargets(kv, deletedMemIds);
       }
 
       if (indexCleaned) await flushIndexSave();

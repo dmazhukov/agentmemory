@@ -7,6 +7,7 @@ import { withKeyedLock } from "../state/keyed-mutex.js";
 import { unindexObservationSession } from "../state/obs-index.js";
 import { recordAudit } from "./audit.js";
 import { deleteAccessLog } from "./access-tracker.js";
+import { deleteFacetsForTargets } from "./facets.js";
 import { getSearchIndex, vectorIndexRemove, flushIndexSave } from "./search.js";
 import { logger } from "../logger.js";
 
@@ -40,28 +41,34 @@ export function registerAutoForgetFunction(sdk: IIIClient, kv: StateKV): void {
 
       const memories = await kv.list<Memory>(KV.memories);
       const deletedIds = new Set<string>();
-      for (const mem of memories) {
-        if (mem.forgetAfter) {
-          const expiry = new Date(mem.forgetAfter).getTime();
-          if (now > expiry) {
-            result.ttlExpired.push(mem.id);
-            deletedIds.add(mem.id);
-            if (!dryRun) {
-              if (mem.imageRef) {
-                await decrementImageRef(kv, sdk, mem.imageRef);
+      const facetIds = new Set<string>();
+      try {
+        for (const mem of memories) {
+          if (mem.forgetAfter) {
+            const expiry = new Date(mem.forgetAfter).getTime();
+            if (now > expiry) {
+              result.ttlExpired.push(mem.id);
+              deletedIds.add(mem.id);
+              if (!dryRun) {
+                if (mem.imageRef) {
+                  await decrementImageRef(kv, sdk, mem.imageRef);
+                }
+                await kv.delete(KV.memories, mem.id);
+                facetIds.add(mem.id);
+                await recordAudit(kv, "delete", "mem::auto-forget", [mem.id], {
+                  resource: "memory",
+                  reason: "auto-forget TTL",
+                  timestamp: mem.forgetAfter,
+                });
+                await deleteAccessLog(kv, mem.id);
+                getSearchIndex().remove(mem.id);
+                vectorIndexRemove(mem.id);
               }
-              await kv.delete(KV.memories, mem.id);
-              await recordAudit(kv, "delete", "mem::auto-forget", [mem.id], {
-                resource: "memory",
-                reason: "auto-forget TTL",
-                timestamp: mem.forgetAfter,
-              });
-              await deleteAccessLog(kv, mem.id);
-              getSearchIndex().remove(mem.id);
-              vectorIndexRemove(mem.id);
             }
           }
         }
+      } finally {
+        await deleteFacetsForTargets(kv, facetIds);
       }
 
       const latestMemories = memories
