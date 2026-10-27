@@ -53,6 +53,7 @@ import { GraphIndexError } from "../state/graph-retrieval-index.js";
 import { registerGraphIndexApi } from "./graph-index-api.js";
 import { LESSON_SOURCE_IDS_MAX, normalizeLessonSourceIds } from "../functions/lessons.js";
 import { logger } from "../logger.js";
+import { getLiveEventsStats } from "../viewer/live-events.js";
 import { isValidEventId } from "../capture/event-id.js";
 import { getCaptureController, type CaptureResult } from "../functions/capture.js";
 import { withoutObservationSource } from "../functions/observation-source.js";
@@ -68,7 +69,6 @@ import {
   getConsolidationDecayDays,
   isAutoCompressEnabled,
   isContextInjectionEnabled,
-  detectEmbeddingProvider,
   describeLlmRoute,
   detectLlmProviderKind,
   getAgentId,
@@ -328,7 +328,7 @@ function sessionFacets(
 function describeEmbeddingProvider(): string {
   const active = getEmbeddingProvider();
   if (active) return `${active.name} (${active.dimensions} dims)`;
-  return detectEmbeddingProvider() ?? "none";
+  return "none";
 }
 
 const STATUS_CHECK_TIMEOUT_MS = 5000;
@@ -416,12 +416,11 @@ export function createStatusReporter(sdk: IIIClient, kv: StateKV, deps: StatusRe
     return evaluateStatus({
       now: new Date(),
       version: VERSION,
-      engineVersion: III_PINNED_VERSION,
+      enginePinnedVersion: III_PINNED_VERSION,
       uptimeSeconds: Math.round(process.uptime()),
       stateBackend: kv.backend === "redis" ? "redis" : "file",
       ports: {
         rest: config.restPort ?? null,
-        streams: config.streamsPort ?? null,
         viewer: getViewerSkipped() ? null : (getBoundViewerPort() ?? null),
       },
       health: health
@@ -554,19 +553,13 @@ export function registerApiTriggers(
     },
   );
 
-  // Shared instance metadata for livez and health so the two never
-  // drift. streamsPort lets the viewer resolve its stream WebSocket
-  // target from the server instead of port arithmetic, which broke
-  // whenever the viewer bound a fallback port. Config is boot-static,
-  // so read it once instead of rebuilding the merged env per request.
+  // Config is boot-static, so read it once rather than rebuilding the merged env per request.
   const bootConfig = loadConfig();
-  const bootStreamsPort = bootConfig.streamsPort;
   setRestOriginPorts(() => [bootConfig.restPort, bootConfig.viewerPort, getBoundViewerPort()]);
   const instanceInfo = () => ({
     service: "agentmemory",
     viewerPort: getBoundViewerPort(),
     viewerSkipped: getViewerSkipped(),
-    streamsPort: bootStreamsPort,
   });
 
   sdk.registerFunction("api::liveness",
@@ -610,7 +603,7 @@ export function registerApiTriggers(
   });
 
   sdk.registerFunction("api::health", 
-    async (req: HttpRequest): Promise<Response> => {
+    async (): Promise<Response> => {
       const health = await getLatestHealth(kv);
       const functionMetrics = metricsStore ? await metricsStore.getAll() : [];
       const circuitBreaker =
@@ -664,7 +657,7 @@ export function registerApiTriggers(
           body: renderStatusHtml(report, nonce, { viewerUrl: statusViewerUrl(req, report.service.ports.viewer) }),
         };
       }
-      return { status_code: 200, headers: { "Cache-Control": "no-store" }, body: report };
+      return { status_code: 200, headers: { "Cache-Control": "no-store" }, body: { ...report, liveEvents: getLiveEventsStats() } };
     },
   );
   sdk.registerTrigger({
@@ -1211,7 +1204,7 @@ export function registerApiTriggers(
       await clearSessionFinalize(kv, sessionId).catch(() => {});
       // Fan out session-stopped lifecycle (non-blocking).
       try {
-        sdk.trigger({
+        void sdk.trigger({
           function_id: "event::session::stopped",
           payload: { sessionId },
           action: TriggerAction.Void(),
@@ -1970,9 +1963,18 @@ export function registerApiTriggers(
       // real corpus (40 sessions × 34K observations × 8K memories) hit the
       // iii engine invocation timeout and `agentmemory status` reported 0.
       // Pass through the query-string pagination so callers can chunk.
+      const payload: {
+        maxSessions?: number;
+        offset?: number;
+        collectionLimit?: number;
+        collectionOffset?: number;
+        collections?: string;
+      } = {};
       const rawMax = req.query_params?.["maxSessions"];
       const rawOffset = req.query_params?.["offset"];
-      const payload: { maxSessions?: number; offset?: number } = {};
+      const rawCollectionLimit = req.query_params?.["collectionLimit"];
+      const rawCollectionOffset = req.query_params?.["collectionOffset"];
+      const rawCollections = req.query_params?.["collections"];
       if (typeof rawMax === "string") {
         const n = Number(rawMax);
         if (Number.isInteger(n) && n > 0) payload.maxSessions = n;
@@ -1980,6 +1982,17 @@ export function registerApiTriggers(
       if (typeof rawOffset === "string") {
         const n = Number(rawOffset);
         if (Number.isInteger(n) && n >= 0) payload.offset = n;
+      }
+      if (typeof rawCollectionLimit === "string") {
+        const n = Number(rawCollectionLimit);
+        if (Number.isInteger(n) && n > 0) payload.collectionLimit = n;
+      }
+      if (typeof rawCollectionOffset === "string") {
+        const n = Number(rawCollectionOffset);
+        if (Number.isInteger(n) && n >= 0) payload.collectionOffset = n;
+      }
+      if (typeof rawCollections === "string") {
+        payload.collections = rawCollections;
       }
       const result = await sdk.trigger({
         function_id: "mem::export",
@@ -3184,10 +3197,13 @@ export function registerApiTriggers(
     async (req: HttpRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      const listQuery = parseListQuery(req.query_params);
       const result = await sdk.trigger({ function_id: "mem::action-list", payload: {
         status: req.query_params?.["status"],
         project: req.query_params?.["project"],
         parentId: req.query_params?.["parentId"],
+        limit: listQuery.limit,
+        cursor: listQuery.cursor,
       } });
       return { status_code: 200, body: result };
     },

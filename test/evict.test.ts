@@ -3,6 +3,7 @@ import type {
   CompressedObservation,
   RawObservation,
   Session,
+  Memory,
 } from "../src/types.js";
 import { registerEvictFunction } from "../src/functions/evict.js";
 import { KV } from "../src/state/schema.js";
@@ -363,5 +364,118 @@ describe("mem::evict stale sessions", () => {
     expect(calls.map((call) => call.function_id)).not.toContain(
       "event::session::stopped",
     );
+  });
+});
+
+describe("mem::evict memory cleanup", () => {
+  function makeEvictMemory(overrides: Partial<Memory>): Memory {
+    return {
+      id: "mem_1",
+      createdAt: daysAgo(31),
+      updatedAt: daysAgo(31),
+      type: "fact",
+      title: "Evicted memory",
+      content: "evicted",
+      concepts: [],
+      files: [],
+      sessionIds: ["ses_1"],
+      strength: 1,
+      version: 1,
+      isLatest: true,
+      ...overrides,
+    };
+  }
+
+  function makeEvictFacet(id: string, targetId: string) {
+    return {
+      id,
+      targetId,
+      targetType: "memory" as const,
+      dimension: "probe",
+      value: "value",
+      createdAt: daysAgo(1),
+    };
+  }
+
+  function registerEvictStubs(
+    sdk: ReturnType<typeof mockSdk>["sdk"],
+    kv: ReturnType<typeof mockKV>,
+  ) {
+    registerEvictFunction(sdk as never, kv as never);
+    sdk.registerFunction("event::session::stopped", () => ({
+      success: true,
+    }));
+    sdk.registerFunction("mem::consolidate-pipeline", () => ({
+      success: true,
+    }));
+    sdk.registerFunction("mem::auto-crystallize", () => ({ success: true }));
+  }
+
+  it("removes facets that point at an expired memory", async () => {
+    const kv = mockKV(new Map());
+    const { sdk } = mockSdk();
+
+    const memory = makeEvictMemory({ id: "mem_expired", forgetAfter: daysAgo(1) });
+    const survivor = makeEvictMemory({ id: "mem_survivor" });
+    await kv.set(KV.memories, memory.id, memory);
+    await kv.set(KV.memories, survivor.id, survivor);
+    await kv.set(KV.facets, "fct_1", makeEvictFacet("fct_1", memory.id));
+    await kv.set(KV.facets, "fct_2", makeEvictFacet("fct_2", memory.id));
+    await kv.set(KV.facets, "fct_3", makeEvictFacet("fct_3", survivor.id));
+
+    registerEvictStubs(sdk, kv);
+    const result = (await sdk.trigger({
+      function_id: "mem::evict",
+      payload: {},
+    })) as { expiredMemories: number };
+
+    expect(result.expiredMemories).toBe(1);
+    const remaining = await kv.list<{ id: string }>(KV.facets);
+    expect(remaining.map((f) => f.id)).toEqual(["fct_3"]);
+  });
+
+  it("removes facets that point at an old non-latest memory", async () => {
+    const kv = mockKV(new Map());
+    const { sdk } = mockSdk();
+
+    const memory = makeEvictMemory({
+      id: "mem_stale",
+      createdAt: daysAgo(120),
+      updatedAt: daysAgo(120),
+      isLatest: false,
+    });
+    const survivor = makeEvictMemory({ id: "mem_survivor" });
+    await kv.set(KV.memories, memory.id, memory);
+    await kv.set(KV.memories, survivor.id, survivor);
+    await kv.set(KV.facets, "fct_1", makeEvictFacet("fct_1", memory.id));
+    await kv.set(KV.facets, "fct_2", makeEvictFacet("fct_2", survivor.id));
+
+    registerEvictStubs(sdk, kv);
+    const result = (await sdk.trigger({
+      function_id: "mem::evict",
+      payload: {},
+    })) as { nonLatestMemories: number };
+
+    expect(result.nonLatestMemories).toBe(1);
+    const remaining = await kv.list<{ id: string }>(KV.facets);
+    expect(remaining.map((f) => f.id)).toEqual(["fct_2"]);
+  });
+
+  it("keeps facets in dryRun", async () => {
+    const kv = mockKV(new Map());
+    const { sdk } = mockSdk();
+
+    const memory = makeEvictMemory({ id: "mem_expired", forgetAfter: daysAgo(1) });
+    await kv.set(KV.memories, memory.id, memory);
+    await kv.set(KV.facets, "fct_1", makeEvictFacet("fct_1", memory.id));
+
+    registerEvictStubs(sdk, kv);
+    const result = (await sdk.trigger({
+      function_id: "mem::evict",
+      payload: { dryRun: true },
+    })) as { expiredMemories: number };
+
+    expect(result.expiredMemories).toBe(1);
+    expect(await kv.list(KV.facets)).toHaveLength(1);
   });
 });
