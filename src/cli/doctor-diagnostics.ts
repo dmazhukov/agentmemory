@@ -183,6 +183,7 @@ export function buildDiagnostics(effects: DoctorEffects): Diagnostic[] {
             detectLlmProviderKind({
               [k]: env[k],
               OPENAI_API_KEY_FOR_LLM: env.OPENAI_API_KEY_FOR_LLM,
+              OPENAI_BASE_URL: env.OPENAI_BASE_URL,
             }) === "llm",
         );
         const fromEnv = real.filter((k) => file[k] !== env[k]);
