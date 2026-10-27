@@ -263,7 +263,7 @@ describe("doctor v2 diagnostic catalog", () => {
       ).toEqual({ ok: true, detail: "agent-sdk fallback, no API key" });
     });
 
-    it("treats a placeholder exported in the environment as missing, unlike the daemon", async () => {
+    it("treats a placeholder exported in the environment as missing, like the daemon", async () => {
       expect(
         (
           await statusFor(

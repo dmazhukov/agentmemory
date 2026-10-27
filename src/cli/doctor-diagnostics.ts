@@ -170,7 +170,6 @@ export function buildDiagnostics(effects: DoctorEffects): Diagnostic[] {
         for (const [k, v] of Object.entries(effects.processEnv())) {
           if (v !== undefined) env[k] = v;
         }
-        for (const k of placeholderProviderKeys(env)) delete env[k];
         if (detectLlmProviderKind(env) !== "llm") {
           return {
             ok: false,
