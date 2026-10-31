@@ -230,14 +230,14 @@ describe("mem::session-sweep", () => {
     unusable.forEach((row, i) => kv.set(KV.sessions, `row-${i}`, row));
     const realGet = kv.get;
     const sessionGetKeys: unknown[] = [];
-    (kv as any).get = async (scope: string, key: unknown) => {
+    kv.get = async <T>(scope: string, key: unknown): Promise<T | null> => {
       if (scope === KV.sessions) sessionGetKeys.push(key);
       if (typeof key !== "string") {
         throw new Error("deserialization_error: Failed to deserialize input for state::get: missing field `key`");
       }
-      return realGet(scope, key);
+      return realGet<T>(scope, key);
     };
-    const sweep = await (sdk as any).trigger({ function_id: "mem::session-sweep", payload: {} });
+    const sweep = await sdk.trigger({ function_id: "mem::session-sweep", payload: {} });
     expect(sweep).toMatchObject({ success: true, abandoned: 1, failed: 0 });
     expect(sessionGetKeys.filter((key) => typeof key !== "string" || key === "")).toEqual([]);
     expect((await realGet<Session>(KV.sessions, "s-old"))!.status).toBe("abandoned");
